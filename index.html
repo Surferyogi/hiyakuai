@@ -1,25 +1,1096 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <title>HiyakuAI — Job Application Studio</title>
-    <meta name="theme-color" content="#0F6E7E" />
-    <link rel="manifest" href="/hiyakuai/manifest.webmanifest" />
-    <link rel="apple-touch-icon" href="/hiyakuai/icon-192.png" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="HiyakuAI" />
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-    <script>
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () =>
-          navigator.serviceWorker.register('/hiyakuai/sw.js').catch(() => {})
-        );
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Sharkfolio — Conviction Desk</title>
+<meta name="description" content="A private conviction desk that scores investment opportunities against a savvy investor's checklist.">
+<link rel="manifest" href="./manifest.webmanifest">
+<meta name="theme-color" content="#0B1418">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Sharkfolio">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0B1418;            /* deep petrol desk */
+    --ink-2:#0F1D23;
+    --panel:#132a31;          /* raised ledger panel */
+    --panel-2:#17323a;
+    --line:#274048;           /* hairline */
+    --line-soft:#1e373f;
+    --bone:#ECE7D8;           /* warm primary text */
+    --muted:#8AA0A0;          /* sage grey */
+    --muted-2:#5f7678;
+    --brass:#C9A24B;          /* value / gravitas / investigate */
+    --pine:#4E9B7A;           /* growth / candidate / go */
+    --rust:#C0603F;           /* pass / warning */
+    --pine-dim:#2c5a48;
+    --brass-dim:#5a4a24;
+    --rust-dim:#5a3225;
+    --focus:#7fd0b4;
+    --r:6px;
+    --shadow:0 1px 0 rgba(255,255,255,.03), 0 18px 40px -24px rgba(0,0,0,.7);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:
+      radial-gradient(1200px 600px at 80% -10%, #16323a 0%, transparent 60%),
+      var(--ink);
+    color:var(--bone);
+    font-family:"Inter",system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    line-height:1.5;
+    min-height:100vh;
+  }
+  .wrap{max-width:1040px;margin:0 auto;padding:22px 20px 80px}
+  .eyebrow{font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--muted);font-weight:600}
+  .mono{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums}
+  .serif{font-family:"Newsreader",Georgia,serif}
+
+  /* Header */
+  header.top{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;border-bottom:1px solid var(--line);padding-bottom:16px;margin-bottom:4px}
+  .brand{display:flex;flex-direction:column;gap:3px}
+  .brand h1{font-family:"Newsreader",serif;font-weight:600;font-size:30px;letter-spacing:-.01em;margin:0;line-height:1}
+  .brand h1 .fin{color:var(--brass)}
+  .brand .sub{color:var(--muted);font-size:12.5px;max-width:52ch}
+  .ver{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--muted-2);text-align:right;white-space:nowrap}
+  .ver .dot{color:var(--pine)}
+
+  /* Tabs */
+  nav.tabs{display:flex;gap:2px;margin:18px 0 22px;border-bottom:1px solid var(--line-soft)}
+  .tab{appearance:none;background:none;border:none;color:var(--muted);font-family:"Inter";font-weight:600;font-size:13px;letter-spacing:.02em;padding:10px 14px;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;transition:color .15s}
+  .tab:hover{color:var(--bone)}
+  .tab.active{color:var(--bone);border-bottom-color:var(--brass)}
+  .tab:focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:3px}
+
+  .view{display:none;animation:rise .25s ease}
+  .view.show{display:block}
+  @keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+  /* Panels */
+  .panel{background:linear-gradient(180deg,var(--panel) 0%,var(--ink-2) 140%);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow)}
+  .pad{padding:18px}
+  .pad-lg{padding:22px}
+  .grid{display:grid;gap:16px}
+  @media(min-width:820px){.cols-2{grid-template-columns:1fr 1fr}}
+
+  label.fld{display:block;margin:0 0 6px}
+  .lbl{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);font-weight:600;margin-bottom:7px;display:flex;align-items:center;gap:8px}
+  textarea,input[type=text]{
+    width:100%;background:var(--ink);border:1px solid var(--line);color:var(--bone);
+    border-radius:var(--r);padding:12px 13px;font-family:"Inter";font-size:14px;line-height:1.55;resize:vertical
+  }
+  textarea:focus,input[type=text]:focus{outline:2px solid var(--focus);outline-offset:-1px;border-color:var(--focus)}
+  textarea::placeholder,input::placeholder{color:var(--muted-2)}
+  .hint{font-size:12px;color:var(--muted);margin-top:7px}
+
+  /* Buttons */
+  .btn{appearance:none;border:1px solid var(--line);background:var(--panel-2);color:var(--bone);font-family:"Inter";font-weight:600;font-size:13.5px;padding:11px 18px;border-radius:var(--r);cursor:pointer;transition:.15s;display:inline-flex;align-items:center;gap:8px}
+  .btn:hover{border-color:var(--brass);color:#fff}
+  .btn:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+  .btn.primary{background:var(--brass);border-color:var(--brass);color:#20180a}
+  .btn.primary:hover{background:#d7b25e}
+  .btn.ghost{background:transparent}
+  .btn.danger:hover{border-color:var(--rust);color:var(--rust)}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .btn-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+
+  /* Dropzone */
+  .drop{border:1px dashed var(--line);border-radius:var(--r);padding:14px;text-align:center;color:var(--muted);font-size:13px;cursor:pointer;transition:.15s;background:var(--ink)}
+  .drop:hover,.drop.over{border-color:var(--brass);color:var(--bone)}
+  .thumb{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:10px;font-size:12.5px;color:var(--muted)}
+  .thumbchip{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:6px;padding:5px 8px 5px 5px;background:var(--ink-2)}
+  .thumbchip img{height:42px;width:42px;object-fit:cover;border-radius:4px;border:1px solid var(--line)}
+  .thumbchip .tname{max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .thumbx{appearance:none;background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px;line-height:1;padding:2px 4px}
+  .thumbx:hover{color:var(--rust)}
+
+  /* Gauge / signature */
+  .verdict-head{display:flex;gap:22px;flex-wrap:wrap;align-items:center}
+  .gauge-box{flex:0 0 auto;width:260px;max-width:100%}
+  .gauge-legend{display:flex;justify-content:space-between;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted-2);margin-top:-6px}
+  .verdict-txt{flex:1 1 240px;min-width:220px}
+  .verdict-tag{display:inline-flex;align-items:center;gap:8px;font-family:"Newsreader",serif;font-size:26px;font-weight:600;line-height:1.1}
+  .pill{display:inline-block;font-family:"IBM Plex Mono";font-size:11px;letter-spacing:.08em;padding:3px 9px;border-radius:100px;border:1px solid}
+  .pill.pine{color:var(--pine);border-color:var(--pine-dim);background:rgba(78,155,122,.08)}
+  .pill.brass{color:var(--brass);border-color:var(--brass-dim);background:rgba(201,162,75,.08)}
+  .pill.rust{color:var(--rust);border-color:var(--rust-dim);background:rgba(192,96,63,.08)}
+  .pill.grey{color:var(--muted);border-color:var(--line)}
+  .kv{display:flex;gap:8px;font-size:13px;margin-top:12px;color:var(--muted)}
+  .kv b{color:var(--bone);font-family:"IBM Plex Mono";font-weight:500}
+
+  .one-line{font-family:"Newsreader",serif;font-size:17px;color:var(--bone);margin:2px 0 0}
+  .asset-meta{font-size:12px;color:var(--muted);margin-top:4px}
+
+  /* Criteria table */
+  .sec-title{font-family:"Newsreader",serif;font-size:19px;font-weight:600;margin:26px 0 4px;display:flex;align-items:center;gap:10px}
+  .sec-title .rule{height:1px;background:var(--line);flex:1}
+  .crit{border:1px solid var(--line-soft);border-radius:var(--r);margin-top:10px;overflow:hidden}
+  .crit-head{display:flex;align-items:center;gap:12px;padding:11px 14px;background:var(--ink-2);cursor:pointer}
+  .crit-head:hover{background:#122730}
+  .crit-name{flex:1;font-weight:600;font-size:13.5px}
+  .crit-name small{display:block;font-weight:400;color:var(--muted-2);font-size:11.5px;margin-top:1px}
+  .score-chip{font-family:"IBM Plex Mono";font-size:13px;font-weight:600;padding:3px 8px;border-radius:4px;min-width:52px;text-align:center;border:1px solid var(--line)}
+  .wt{font-family:"IBM Plex Mono";font-size:11px;color:var(--muted-2);width:44px;text-align:right}
+  .bar{height:5px;background:var(--ink);border-radius:3px;overflow:hidden;flex:0 0 90px;border:1px solid var(--line-soft)}
+  .bar > i{display:block;height:100%}
+  .crit-body{padding:0 14px 14px;font-size:13px;display:none}
+  .crit.open .crit-body{display:block}
+  .crit-body .rationale{color:var(--bone);margin:10px 0 12px;font-family:"Newsreader",serif;font-size:14.5px}
+  .evi h5,.gap h5{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:0 0 5px;font-weight:600}
+  .evi ul,.gap ul{margin:0 0 12px;padding-left:18px}
+  .evi li{margin:3px 0;color:#cfe0d8}
+  .gap li{margin:3px 0;color:#e0c9a3}
+  .na{font-family:"IBM Plex Mono";font-size:12px;color:var(--muted-2)}
+
+  /* Lists (flags / dd) */
+  .twocol{display:grid;gap:16px}
+  @media(min-width:820px){.twocol{grid-template-columns:1fr 1fr}}
+  .listcard{border:1px solid var(--line);border-radius:var(--r);padding:16px;background:var(--ink-2)}
+  .listcard h4{margin:0 0 10px;font-size:12px;letter-spacing:.14em;text-transform:uppercase;font-weight:600}
+  .listcard.flags h4{color:var(--rust)}
+  .listcard.dd h4{color:var(--brass)}
+  .listcard ul{margin:0;padding-left:18px;font-size:13.5px}
+  .listcard li{margin:6px 0}
+  .case{border-left:2px solid var(--line);padding:2px 0 2px 14px;margin:8px 0}
+  .case.bull{border-color:var(--pine-dim)}
+  .case.bear{border-color:var(--rust-dim)}
+  .case h5{margin:0 0 4px;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+  .case p{margin:0;font-family:"Newsreader",serif;font-size:14.5px}
+
+  /* Coverage callout */
+  .cov{display:flex;align-items:center;gap:14px;border:1px solid var(--line);border-radius:var(--r);padding:12px 16px;background:var(--ink-2);margin-top:16px;font-size:13px;color:var(--muted)}
+  .cov b{color:var(--bone);font-family:"IBM Plex Mono"}
+
+  /* History */
+  .hrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:13px 15px;border:1px solid var(--line-soft);border-radius:var(--r);margin-top:10px;cursor:pointer;background:var(--ink-2);transition:.15s}
+  .hrow:hover{border-color:var(--brass)}
+  .hscore{font-family:"IBM Plex Mono";font-weight:600;font-size:17px;width:46px;text-align:center;flex:0 0 46px}
+  .hmeta{flex:1 1 130px;min-width:110px}
+  .hrow .pill{white-space:nowrap;flex:0 0 auto}
+  .hmeta .nm{font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .hmeta .dt{font-size:11.5px;color:var(--muted-2);font-family:"IBM Plex Mono"}
+  .hedit{width:100%;box-sizing:border-box;background:var(--ink);border:1px solid var(--focus);color:var(--bone);border-radius:4px;padding:10px 10px;font-family:"Inter";font-size:16px;font-weight:600}
+  .hrow.editing .hmeta{flex:1 1 100%;order:-1;min-width:0}
+  .hrow.editing .pill,.hrow.editing .hscore{display:none}
+  .hbtns{display:flex;gap:6px;flex-shrink:0;margin-left:auto}
+  .hicon{appearance:none;background:none;border:1px solid var(--line);border-radius:4px;color:var(--muted);cursor:pointer;font-size:12px;padding:6px 9px;transition:.15s}
+  .hicon:hover{border-color:var(--brass);color:var(--bone)}
+  .hicon.danger:hover{border-color:var(--rust);color:var(--rust)}
+
+  /* misc */
+  .empty{text-align:center;color:var(--muted);padding:46px 20px;font-size:14px}
+  .empty .big{font-family:"Newsreader",serif;font-size:20px;color:var(--bone);margin-bottom:6px}
+  .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:var(--panel-2);border:1px solid var(--line);color:var(--bone);padding:11px 18px;border-radius:var(--r);font-size:13px;box-shadow:var(--shadow);opacity:0;pointer-events:none;transition:.25s;z-index:50}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(-4px)}
+  .toast.err{border-color:var(--rust);color:#f0c3b4}
+  .spin{width:15px;height:15px;border:2px solid rgba(255,255,255,.25);border-top-color:var(--bone);border-radius:50%;animation:sp .7s linear infinite;display:inline-block}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .foot{margin-top:34px;padding-top:16px;border-top:1px solid var(--line-soft);font-size:11.5px;color:var(--muted-2);line-height:1.6}
+  .foot b{color:var(--muted)}
+  .wtgrid{display:grid;grid-template-columns:1fr auto;gap:8px 14px;align-items:center;font-size:13px}
+  .wtgrid input{width:66px;text-align:right;padding:7px 9px}
+  .wtsum{font-family:"IBM Plex Mono";font-size:12px;color:var(--muted)}
+  .benchcard{border:1px solid var(--line);border-radius:var(--r);padding:14px 16px;background:var(--ink-2)}
+  .benchfresh{font-family:"IBM Plex Mono";font-size:10.5px;letter-spacing:.05em;padding:2px 8px;border-radius:100px;border:1px solid var(--line);color:var(--muted);text-transform:none;font-weight:400}
+  .benchfresh.ok{color:var(--pine);border-color:var(--pine-dim)}
+  .benchfresh.stale{color:var(--brass);border-color:var(--brass-dim)}
+  .benchfresh.grey{color:var(--muted-2)}
+  .benchbody .benchrow{display:flex;align-items:baseline;gap:10px;font-size:13.5px;flex-wrap:wrap}
+  .benchbig{font-size:22px;font-weight:600;color:var(--bone)}
+  .benchmeta{font-size:11.5px;color:var(--muted-2);margin:2px 0 0;font-family:"IBM Plex Mono"}
+  @media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div class="brand">
+      <div class="eyebrow">Private conviction desk</div>
+      <h1>Shark<span class="fin">folio</span></h1>
+      <div class="sub">Paste a pitch, a ticker sheet, or a screenshot. Get a disciplined, evidence-only read scored against a savvy investor's checklist — and your own portfolio and competencies.</div>
+    </div>
+    <div class="ver" id="ver">v————<br><span class="dot">●</span> ready</div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-view="evaluate" role="tab">Evaluate</button>
+    <button class="tab" data-view="playbook" role="tab">Playbook</button>
+    <button class="tab" data-view="history" role="tab">History</button>
+    <button class="tab" data-view="method" role="tab">Method</button>
+    <button class="tab" data-view="settings" role="tab">Settings</button>
+  </nav>
+
+  <!-- ===================== EVALUATE ===================== -->
+  <section class="view show" id="view-evaluate">
+    <div class="panel pad-lg">
+      <label class="fld">
+        <span class="lbl">The opportunity</span>
+        <textarea id="inputText" rows="7" placeholder="Paste the write-up, pitch, ticker fact-sheet, listing, or thesis here. The scorer reads only what you provide — it will not invent numbers a source doesn't state."></textarea>
+      </label>
+
+      <div style="margin-top:14px">
+        <span class="lbl">Website link (optional)</span>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start">
+          <input type="text" id="linkUrl" placeholder="https://… a listing or company page" style="flex:1;min-width:220px" autocomplete="off">
+          <button class="btn" id="extractBtn">Extract from link</button>
+        </div>
+        <div class="hint" id="extractStatus" style="margin-top:7px">Anthropic's servers fetch the page (your browser can't, for most sites). Extracted facts fill the box above for you to review before scoring. Won't get past logins or paywalls.</div>
+      </div>
+
+      <div style="margin-top:14px">
+        <span class="lbl">Screenshot (optional)</span>
+        <div class="drop" id="drop" tabindex="0" role="button" aria-label="Upload a screenshot">
+          Drop images here, or click to choose. Multiple allowed. PNG / JPEG / WebP.
+        </div>
+        <input type="file" id="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
+        <div class="thumb" id="thumb" style="display:none"></div>
+      </div>
+
+      <div class="btn-row" style="margin-top:18px">
+        <button class="btn primary" id="scoreBtn">Score it</button>
+        <button class="btn ghost" id="clearBtn">Clear</button>
+        <span class="hint" id="profileWarn" style="margin:0"></span>
+      </div>
+    </div>
+
+    <div id="result"></div>
+  </section>
+
+  <!-- ===================== PLAYBOOK ===================== -->
+  <section class="view" id="view-playbook">
+    <div class="panel pad-lg">
+      <div class="eyebrow" style="margin-bottom:4px">Your mandate</div>
+      <p class="hint" style="margin-top:0;max-width:66ch">Two of the nine criteria — <b style="color:var(--bone)">Competence Fit</b> and <b style="color:var(--bone)">Portfolio Fit</b> — are judged only against what you enter here. Leave a field blank and that dimension is marked <span class="mono">Not assessable</span> rather than guessed. Nothing here is pre-filled with invented data.</p>
+
+      <div class="grid cols-2" style="margin-top:14px">
+        <label class="fld">
+          <span class="lbl">Circle of competence</span>
+          <textarea id="pf_comp" rows="5" placeholder="Sectors, business models, and technologies you genuinely understand. e.g. industrial gases, energy transition, semiconductors, APAC operations…"></textarea>
+        </label>
+        <label class="fld">
+          <span class="lbl">Current portfolio & themes</span>
+          <textarea id="pf_port" rows="5" placeholder="What you already hold and the exposures/risks it carries — so fit and correlation can be judged. e.g. heavy in industrial/energy equities, one late-stage climate startup, cash reserve…"></textarea>
+        </label>
+      </div>
+
+      <div class="benchcard" id="benchCard" style="margin-top:2px">
+        <div class="lbl" style="margin-bottom:8px">Benchmark to beat — S&amp;P 500 total return <span id="benchFresh" class="benchfresh"></span></div>
+        <div id="benchBody" class="benchbody"></div>
+        <div class="btn-row" style="margin-top:12px">
+          <button class="btn ghost" id="refreshBench">Refresh now</button>
+          <span class="hint" id="benchNote" style="margin:0"></span>
+        </div>
+      </div>
+      <p class="hint" style="margin-top:8px">The trailing 10-year figure is the live hurdle and refreshes about monthly when you open the app (an artifact can't run while closed — a true unattended monthly fetch belongs on a backend). The long-run figure is a stable anchor. Set a custom hurdle below only if you want to override the S&amp;P 500.</p>
+
+      <div class="grid cols-2" style="margin-top:14px">
+        <label class="fld">
+          <span class="lbl">Custom hurdle (optional override)</span>
+          <input type="text" id="pf_bench" placeholder="Blank = use the S&P 500 figure above. Or set your own, e.g. 12%/yr">
+        </label>
+        <label class="fld">
+          <span class="lbl">Horizon</span>
+          <input type="text" id="pf_hurdle" placeholder="e.g. judged over a 3–5 year hold">
+        </label>
+      </div>
+
+      <label class="fld" style="margin-top:2px">
+        <span class="lbl">Risk tolerance & hard rules</span>
+        <textarea id="pf_risk" rows="3" placeholder="e.g. no single position &gt; 10%; avoid pre-revenue; liquidity within 12 months; no thesis I can't explain in three sentences…"></textarea>
+      </label>
+
+      <div class="sec-title" style="margin-top:20px">Weights <span class="rule"></span></div>
+      <p class="hint" style="margin-top:8px">The composite is a weighted blend of the nine criteria. Tune to taste; the total need not equal 100 — weights are normalised automatically, and re-normalised across only the criteria that could actually be assessed.</p>
+      <div class="wtgrid" id="wtgrid" style="margin-top:12px"></div>
+      <div class="wtsum" id="wtsum" style="margin-top:12px"></div>
+
+      <div class="btn-row" style="margin-top:20px">
+        <button class="btn primary" id="saveProfile">Save playbook</button>
+        <button class="btn ghost" id="resetWeights">Reset weights</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== HISTORY ===================== -->
+  <section class="view" id="view-history">
+    <div class="panel pad-lg">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+        <div class="eyebrow">Scored to date</div>
+        <div class="btn-row">
+          <button class="btn ghost" id="exportBtn">Export JSON</button>
+          <button class="btn ghost" id="importBtn">Import JSON</button>
+          <input type="file" id="importFile" accept="application/json,.json" hidden>
+          <button class="btn ghost danger" id="wipeBtn">Clear all</button>
+        </div>
+      </div>
+      <p class="hint" style="margin-top:10px">History is stored in this browser on this device — it does not sync between your phone and laptop, and clearing site data erases it. To move or back up evaluations: <b style="color:var(--bone)">Export JSON</b> on one device, then <b style="color:var(--bone)">Import JSON</b> on the other. Importing merges by entry, so re-importing the same file adds nothing and never overwrites what's already here.</p>
+      <div id="historyList"></div>
+    </div>
+  </section>
+
+  <!-- ===================== METHOD ===================== -->
+  <section class="view" id="view-method">
+    <div class="panel pad-lg">
+      <div class="sec-title" style="margin-top:0">How the read is built <span class="rule"></span></div>
+      <p style="font-size:14px;max-width:70ch">Every opportunity is scored 0–10 on nine criteria a savvy allocator would insist on. The model scores only what your input actually evidences; the maths, the verdict, and the confidence are computed here in the open — not by the model — so nothing is a black box.</p>
+      <div id="methodCrit" style="margin-top:6px"></div>
+
+      <div class="sec-title">The two dials <span class="rule"></span></div>
+      <p style="font-size:14px;max-width:70ch"><b style="color:var(--brass)">Conviction</b> is the weighted composite. <b style="color:var(--pine)">Evidence coverage</b> is how much of the framework your input let it assess. A high conviction on thin coverage is drawn deliberately hollow — a savvy investor distrusts a confident score built on unknowns. Below 35% coverage, the verdict is withheld as <span class="mono">Insufficient data</span> no matter how the numbers land.</p>
+
+      <div class="cov" style="margin-top:4px">
+        <span class="mono" style="color:var(--pine)">◐</span>
+        <div><b>Zero fabrication.</b> Missing figures are returned as <span class="mono">Not stated</span> and lower coverage — never filled with an industry-average guess. Competence and portfolio fit come only from your Playbook.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== SETTINGS ===================== -->
+  <section class="view" id="view-settings">
+    <div class="panel pad-lg">
+      <div class="eyebrow" style="margin-bottom:4px">Connection</div>
+      <p class="hint" style="margin-top:0;max-width:66ch">Sharkfolio calls the Anthropic API directly from your browser with <b style="color:var(--bone)">your own key</b>. The key is stored only in this browser, on this device — it is never sent anywhere except Anthropic, and it is not baked into the app, so anyone opening the site without their own key simply can't run a score.</p>
+
+      <label class="fld" style="margin-top:14px">
+        <span class="lbl">Anthropic API key</span>
+        <input type="password" id="set_key" placeholder="sk-ant-… (stored locally on this device only)" autocomplete="off">
+      </label>
+      <p class="hint" style="margin-top:6px">Create one at <span class="mono">console.anthropic.com</span> → API Keys. Usage is billed to that account.</p>
+
+      <label class="fld" style="margin-top:14px">
+        <span class="lbl">Model</span>
+        <input type="text" id="set_model" placeholder="claude-sonnet-5">
+      </label>
+      <p class="hint" style="margin-top:6px">Use any model string valid for your account (e.g. <span class="mono">claude-sonnet-5</span>, <span class="mono">claude-opus-4-8</span>). Confirm the exact name in your Anthropic console. Web-search benchmark refresh needs a model and key with web search enabled.</p>
+
+      <div class="btn-row" style="margin-top:18px">
+        <button class="btn primary" id="saveSettings">Save settings</button>
+        <button class="btn ghost" id="testKey">Test connection</button>
+        <span class="hint" id="setStatus" style="margin:0"></span>
+      </div>
+
+      <div class="sec-title">App <span class="rule"></span></div>
+      <p class="hint" style="margin-top:8px">Version <span class="mono" id="verLine"></span>. Your Playbook, history, benchmark cache, key, and model live in this browser's local storage. Clearing site data or switching devices/browsers starts fresh — export your history from the History tab to keep a copy.</p>
+    </div>
+  </section>
+
+  <div class="foot">
+    <b>Not investment advice.</b> Sharkfolio structures your own diligence; it does not verify claims in the material you paste, cannot see live market data in this version, and can be wrong. Treat every score as a prompt for your judgement, not a substitute for it. &nbsp;·&nbsp; <b>Privacy:</b> your Playbook and history are stored locally to this app; the opportunity text/image is sent to the model only to produce a score.
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const APP_VERSION = "v2026:07:24-07:12"; // Asia/Tokyo — bump on every change to this file
+const DEFAULT_MODEL = "claude-sonnet-5"; // change in Settings; must be a model string valid for your Anthropic account
+function getKey(){ try{return localStorage.getItem("shark:apikey")||"";}catch(e){return "";} }
+function getModel(){ try{return localStorage.getItem("shark:model")||DEFAULT_MODEL;}catch(e){return DEFAULT_MODEL;} }
+function apiHeaders(){ return {"Content-Type":"application/json","x-api-key":getKey(),"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"}; }
+function fetchHeaders(){ return Object.assign(apiHeaders(), {"anthropic-beta":"web-fetch-2025-09-10"}); } // web_fetch is beta; scoped to the extract call only
+
+const CRITERIA = [
+  {key:"competence_fit", label:"Circle of Competence Fit", w:12, desc:"Falls within your stated competencies", profile:true},
+  {key:"quality_moat",   label:"Business Quality & Moat", w:15, desc:"Durable advantage, pricing power, defensibility"},
+  {key:"valuation",      label:"Valuation & Margin of Safety", w:15, desc:"Price vs value; discount to intrinsic worth"},
+  {key:"financials",     label:"Financial Health & Unit Economics", w:15, desc:"Cash flow, balance sheet, ROIC / burn & runway"},
+  {key:"growth",         label:"Growth Runway", w:10, desc:"Addressable market, scalability, reinvestment"},
+  {key:"management",     label:"Management / Founder Quality", w:10, desc:"Track record, integrity, skin in the game"},
+  {key:"risk_asymmetry", label:"Risk & Asymmetry", w:11, desc:"Permanent-loss risk vs upside skew"},
+  {key:"market_beating", label:"Market-Beating Potential", w:7,  desc:"Plausible return vs your benchmark hurdle"},
+  {key:"portfolio_fit",  label:"Portfolio Fit", w:5,  desc:"Diversification / correlation with current holdings", profile:true}
+];
+const DEFAULT_WEIGHTS = Object.fromEntries(CRITERIA.map(c=>[c.key,c.w]));
+
+/* Circle of competence seeded from the owner's HiyakuAI professional profile
+   (domain-level only; editable in the Playbook, cleared value is respected). */
+const DEFAULT_COMPETENCE = "Deep operator's knowledge in: industrial gases and industrial technology/services; semiconductors and electronics materials (and their supply chains); energy transition, decarbonization, carbon capture, and net-zero/ESG roadmaps; deep-tech / hard-tech commercialization and scaling; and applied industrial AI (materials and molecule discovery, plant design and operations). Judgment lenses: full P&L ownership and capital allocation in large industrials, R&D / innovation and patent-driven moats, and APAC market entry and operations (Japan, Korea, China, Taiwan, Singapore). Ph.D. in Chemical-Bioengineering; Six Sigma Black Belt. Outside my circle (treat opportunities here as a competence gap, not a strength): consumer / retail & brands, and pure fintech / financial services.";
+
+let profile = {comp:DEFAULT_COMPETENCE,port:"",bench:"",hurdle:"",risk:"",weights:{...DEFAULT_WEIGHTS}};
+let history = [];
+let pendingImages = []; // [{dataUrl, b64, media_type, name}]
+const MAX_IMAGES = 10;
+
+/* Benchmark = S&P 500 total return. Seeded with REAL, sourced figures (fetched mid-2026);
+   the trailing figure lazy-refreshes ~monthly on open. Sources noted per field. */
+const BENCH_REFRESH_DAYS = 30;
+const DEFAULT_BENCH = {
+  trailing10: { value: 15.49, label: "Trailing 10-yr annualized total return (dividends reinvested)", asOf: "end-May 2026", source: "Trade That Swing (corroborated ~15.05%, SPY, InvestSnips, Jun 2026)", fetchedAt: 0 },
+  longRun:    { value: 10.3,  label: "Long-run annualized total return (since 1957, dividends reinvested)", asOf: "mid-2026", source: "Fidelity / Motley Fool / DQYDJ, 10.2–10.4%" }
+};
+let bench = JSON.parse(JSON.stringify(DEFAULT_BENCH));
+let benchTriedThisSession = false;
+
+/* ---------- storage helpers ---------- */
+async function storeGet(k){ try{const v=localStorage.getItem(k); return v?JSON.parse(v):null;}catch(e){return null;} }
+async function storeSet(k,v){ try{localStorage.setItem(k, JSON.stringify(v));}catch(e){console.error(e);} }
+
+/* ---------- boot ---------- */
+async function boot(){
+  document.getElementById("ver").innerHTML = APP_VERSION + '<br><span class="dot">●</span> ready';
+  const p = await storeGet("shark:profile"); if(p){ profile = Object.assign(profile,p); profile.weights = Object.assign({...DEFAULT_WEIGHTS}, p.weights||{}); }
+  const h = await storeGet("shark:history"); if(Array.isArray(h)) history = h;
+  const b = await storeGet("shark:bench");
+  if(b){ bench.trailing10 = Object.assign({...DEFAULT_BENCH.trailing10}, b.trailing10||{}); bench.longRun = Object.assign({...DEFAULT_BENCH.longRun}, b.longRun||{}); }
+  fillProfileForm(); buildWeightGrid(); buildMethod(); renderHistory(); updateProfileWarn(); renderBench(); fillSettings();
+  maybeRefreshBench();
+}
+document.addEventListener("DOMContentLoaded", boot);
+
+/* ---------- tabs ---------- */
+document.querySelectorAll(".tab").forEach(t=>{
+  t.addEventListener("click",()=>{
+    document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));
+    document.querySelectorAll(".view").forEach(x=>x.classList.remove("show"));
+    t.classList.add("active");
+    document.getElementById("view-"+t.dataset.view).classList.add("show");
+  });
+});
+
+/* ---------- profile form ---------- */
+function fillProfileForm(){
+  pf_comp.value=profile.comp||""; pf_port.value=profile.port||"";
+  pf_bench.value=profile.bench||""; pf_hurdle.value=profile.hurdle||""; pf_risk.value=profile.risk||"";
+}
+function buildWeightGrid(){
+  const g=document.getElementById("wtgrid"); g.innerHTML="";
+  CRITERIA.forEach(c=>{
+    const lab=document.createElement("div"); lab.textContent=c.label;
+    const inp=document.createElement("input"); inp.type="text"; inp.inputMode="numeric";
+    inp.value=profile.weights[c.key]; inp.dataset.key=c.key;
+    inp.addEventListener("input",()=>{ const v=parseFloat(inp.value); profile.weights[c.key]=isNaN(v)?0:v; updateWtSum(); });
+    g.appendChild(lab); g.appendChild(inp);
+  });
+  updateWtSum();
+}
+function updateWtSum(){
+  const sum=CRITERIA.reduce((s,c)=>s+(profile.weights[c.key]||0),0);
+  document.getElementById("wtsum").textContent="Total weight: "+sum.toFixed(0)+"  (normalised automatically)";
+}
+document.getElementById("resetWeights").addEventListener("click",()=>{ profile.weights={...DEFAULT_WEIGHTS}; buildWeightGrid(); toast("Weights reset to default"); });
+document.getElementById("saveProfile").addEventListener("click",async()=>{
+  profile.comp=pf_comp.value.trim(); profile.port=pf_port.value.trim();
+  profile.bench=pf_bench.value.trim(); profile.hurdle=pf_hurdle.value.trim(); profile.risk=pf_risk.value.trim();
+  await storeSet("shark:profile",profile); updateProfileWarn(); renderBench(); toast("Playbook saved");
+});
+function updateProfileWarn(){
+  const w=document.getElementById("profileWarn"); const miss=[];
+  if(!profile.comp) miss.push("competencies"); if(!profile.port) miss.push("portfolio");
+  w.textContent = miss.length ? ("Playbook empty ("+miss.join(" + ")+") — those criteria will read Not assessable.") : "";
+  w.style.color = miss.length ? "var(--brass)" : "var(--muted)";
+}
+
+/* ---------- benchmark (S&P 500) ---------- */
+function benchLabelShort(){ return profile.bench ? profile.bench : `the S&P 500 (~${bench.trailing10.value}%/yr, trailing 10-yr)`; }
+function fmtWhen(ts){ const d=new Date(ts); return d.toLocaleDateString(); }
+function renderBench(){
+  const body=document.getElementById("benchBody"); if(!body) return;
+  const t=bench.trailing10, l=bench.longRun;
+  const override = profile.bench
+    ? `<div class="benchrow" style="margin-top:10px;color:var(--brass)"><b>Override active:</b>&nbsp;${escapeHtml(profile.bench)} — this replaces the S&P 500 hurdle in scoring.</div>` : "";
+  body.innerHTML =
+    `<div class="benchrow"><span class="benchbig mono">${escapeHtml(String(t.value))}%</span><span>${escapeHtml(t.label)}</span></div>`+
+    `<div class="benchmeta">as of ${escapeHtml(t.asOf)} · source: ${escapeHtml(t.source)}</div>`+
+    `<div class="benchrow" style="margin-top:10px"><span class="benchbig mono" style="color:var(--muted)">${escapeHtml(String(l.value))}%</span><span>${escapeHtml(l.label)}</span></div>`+
+    `<div class="benchmeta">${escapeHtml(l.asOf)} · source: ${escapeHtml(l.source)}</div>`+
+    override;
+  const fresh=document.getElementById("benchFresh");
+  if(fresh){
+    if(!t.fetchedAt){ fresh.textContent="seeded figure · not yet refreshed in-app"; fresh.className="benchfresh grey"; }
+    else { const days=Math.floor((Date.now()-t.fetchedAt)/86400000); fresh.textContent=days<=0?"checked today":("checked "+days+"d ago"); fresh.className="benchfresh "+(days>BENCH_REFRESH_DAYS?"stale":"ok"); }
+  }
+}
+function maybeRefreshBench(){
+  const t=bench.trailing10;
+  if(!t.fetchedAt || (Date.now()-t.fetchedAt) > BENCH_REFRESH_DAYS*86400000) refreshBench(false);
+}
+async function refreshBench(manual){
+  if(!manual && benchTriedThisSession) return;
+  benchTriedThisSession = true;
+  const note=document.getElementById("benchNote");
+  if(note){ note.textContent="Checking the latest S&P 500 figure…"; note.style.color="var(--muted)"; }
+  if(!getKey()){ if(note){ note.textContent="Add your API key in Settings to auto-refresh the benchmark."; note.style.color="var(--brass)"; } return; }
+  try{
+    const prompt='Search the web for the CURRENT S&P 500 trailing 10-year ANNUALIZED TOTAL RETURN (dividends reinvested). Use a reputable, recent source. Respond with ONLY a JSON object and no other text: {"value": <number, percent per year, e.g. 15.2>, "as_of": "<month year>", "source": "<source name>"}. If you cannot find a clearly sourced current figure, respond exactly {"value": null}.';
+    const resp=await fetch("https://api.anthropic.com/v1/messages",{
+      method:"POST", headers:apiHeaders(),
+      body:JSON.stringify({ model:getModel(), max_tokens:1024, messages:[{role:"user",content:prompt}], tools:[{type:"web_search_20250305",name:"web_search"}] })
+    });
+    if(!resp.ok) throw new Error("HTTP "+resp.status);
+    const data=await resp.json();
+    const txt=(data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("\n");
+    const obj=parseJson(txt);
+    const val = (obj && obj.value!=null) ? parseFloat(String(obj.value).replace(/[%\s]/g,"")) : NaN;
+    if(!isNaN(val) && val>-6 && val<25 && obj.source){
+      bench.trailing10={ value:Math.round(val*100)/100, label:DEFAULT_BENCH.trailing10.label, asOf:(obj.as_of||"recent"), source:String(obj.source), fetchedAt:Date.now() };
+      await storeSet("shark:bench",bench); renderBench();
+      if(note){ note.textContent="Updated "+fmtWhen(Date.now())+"."; note.style.color="var(--pine)"; }
+      if(manual) toast("Benchmark refreshed: "+bench.trailing10.value+"%");
+    } else { throw new Error("no clearly-sourced figure"); }
+  }catch(e){
+    if(note){ note.textContent="Couldn't refresh — keeping the last figure ("+bench.trailing10.value+"%, "+bench.trailing10.asOf+")."+(manual?" Try again shortly.":""); note.style.color="var(--brass)"; }
+  }
+}
+document.getElementById("refreshBench").addEventListener("click",()=>refreshBench(true));
+
+/* ---------- settings ---------- */
+function setStatus(msg,kind){ const s=document.getElementById("setStatus"); if(!s) return; s.textContent=msg; s.style.color = kind==="ok"?"var(--pine)":kind==="err"?"var(--rust)":"var(--muted)"; }
+function fillSettings(){
+  const k=document.getElementById("set_key"); if(k) k.value=getKey();
+  const m=document.getElementById("set_model"); if(m) m.value=getModel();
+  const v=document.getElementById("verLine"); if(v) v.textContent=APP_VERSION;
+}
+document.getElementById("saveSettings").addEventListener("click",()=>{
+  try{
+    const k=document.getElementById("set_key").value.trim();
+    const m=document.getElementById("set_model").value.trim()||DEFAULT_MODEL;
+    localStorage.setItem("shark:apikey",k); localStorage.setItem("shark:model",m);
+    setStatus("Saved.","ok"); benchTriedThisSession=false; maybeRefreshBench();
+  }catch(e){ setStatus("Couldn't save to local storage.","err"); }
+});
+document.getElementById("testKey").addEventListener("click",async()=>{
+  if(!document.getElementById("set_key").value.trim()){ setStatus("Enter a key first.","err"); return; }
+  localStorage.setItem("shark:apikey",document.getElementById("set_key").value.trim());
+  setStatus("Testing…","");
+  try{
+    const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:apiHeaders(),body:JSON.stringify({model:(document.getElementById("set_model").value.trim()||DEFAULT_MODEL),max_tokens:16,messages:[{role:"user",content:"ping"}]})});
+    setStatus(r.ok?"Connection OK.":"Failed ("+r.status+") — check the key and model string.", r.ok?"ok":"err");
+  }catch(e){ setStatus("Network error reaching Anthropic.","err"); }
+});
+
+/* ---------- method tab ---------- */
+function buildMethod(){
+  const m=document.getElementById("methodCrit"); m.innerHTML="";
+  CRITERIA.forEach(c=>{
+    const d=document.createElement("div"); d.className="crit"; d.style.marginTop="8px";
+    d.innerHTML=`<div class="crit-head" style="cursor:default"><div class="crit-name">${c.label}${c.profile?' <span class="mono" style="color:var(--brass);font-size:11px">· from Playbook</span>':''}<small>${c.desc}</small></div><div class="wt">wt ${c.w}</div></div>`;
+    m.appendChild(d);
+  });
+}
+
+/* ---------- image handling ---------- */
+const drop=document.getElementById("drop"), fileInput=document.getElementById("file"), thumb=document.getElementById("thumb");
+drop.addEventListener("click",()=>fileInput.click());
+drop.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();fileInput.click();}});
+["dragenter","dragover"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add("over");}));
+["dragleave","drop"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove("over");}));
+drop.addEventListener("drop",e=>{ if(e.dataTransfer.files) handleFiles(e.dataTransfer.files); });
+fileInput.addEventListener("change",e=>{ handleFiles(e.target.files); fileInput.value=""; });
+// Downscale to <=1568px long edge and re-encode as JPEG so many screenshots fit in one request.
+function processImage(file){
+  return new Promise((resolve,reject)=>{
+    const rd=new FileReader();
+    rd.onerror=()=>reject(new Error("read"));
+    rd.onload=()=>{
+      const img=new Image();
+      img.onerror=()=>reject(new Error("decode"));
+      img.onload=()=>{
+        try{
+          const MAX=1568, scale=Math.min(1, MAX/Math.max(img.width,img.height));
+          const w=Math.max(1,Math.round(img.width*scale)), h=Math.max(1,Math.round(img.height*scale));
+          const c=document.createElement("canvas"); c.width=w; c.height=h;
+          const ctx=c.getContext("2d"); ctx.fillStyle="#ffffff"; ctx.fillRect(0,0,w,h); ctx.drawImage(img,0,0,w,h);
+          const out=c.toDataURL("image/jpeg",0.82);
+          resolve({dataUrl:out, b64:out.split(",")[1], media_type:"image/jpeg", name:file.name});
+        }catch(e){ // fallback: send original bytes
+          const d=rd.result; resolve({dataUrl:d, b64:d.split(",")[1], media_type:file.type, name:file.name});
+        }
+      };
+      img.src=rd.result;
+    };
+    rd.readAsDataURL(file);
+  });
+}
+async function handleFiles(list){
+  const files=Array.from(list||[]);
+  if(!files.length) return;
+  let skipped=0;
+  for(const f of files){
+    if(!/^image\/(png|jpeg|webp)$/.test(f.type)){ skipped++; continue; }
+    if(pendingImages.length >= MAX_IMAGES){ toast("Up to "+MAX_IMAGES+" images","err"); break; }
+    try{ const im=await processImage(f); if(pendingImages.length<MAX_IMAGES){ pendingImages.push(im); renderThumbs(); } }
+    catch(e){ toast("Could not read "+(f.name||"an image"),"err"); }
+  }
+  if(skipped) toast(skipped+" file"+(skipped>1?"s":"")+" skipped (need PNG, JPEG, or WebP)","err");
+}
+function renderThumbs(){
+  if(!pendingImages.length){ thumb.style.display="none"; thumb.innerHTML=""; return; }
+  thumb.style.display="flex";
+  thumb.innerHTML = pendingImages.map((im,i)=>`<span class="thumbchip"><img src="${im.dataUrl}" alt=""><span class="tname">${escapeHtml(im.name||("image "+(i+1)))}</span><button class="thumbx" data-rm="${i}" aria-label="Remove image" title="Remove">✕</button></span>`).join("")
+    + (pendingImages.length>1?`<button class="btn ghost" id="clearImgs" style="padding:5px 10px;font-size:12px">Remove all</button>`:"");
+  thumb.querySelectorAll("[data-rm]").forEach(b=>b.addEventListener("click",()=>{ pendingImages.splice(+b.dataset.rm,1); renderThumbs(); }));
+  const ca=document.getElementById("clearImgs"); if(ca) ca.addEventListener("click",()=>{ pendingImages=[]; renderThumbs(); });
+}
+document.getElementById("clearBtn").addEventListener("click",()=>{ inputText.value=""; pendingImages=[]; renderThumbs(); fileInput.value=""; document.getElementById("result").innerHTML=""; });
+
+/* ---------- prompt ---------- */
+function buildPrompt(){
+  const wLines = CRITERIA.map(c=>`- ${c.key} — ${c.label}: ${c.desc}`).join("\n");
+  const benchLine = profile.bench
+    ? `${profile.bench} (investor's custom override)`
+    : `S&P 500 total return — trailing 10-yr ~${bench.trailing10.value}% annualized (${bench.trailing10.asOf}; ${bench.trailing10.source}); long-run ~${bench.longRun.value}% since 1957`;
+  const prof = [
+    `Circle of competence: ${profile.comp || "(not provided)"}`,
+    `Current portfolio & themes: ${profile.port || "(not provided)"}`,
+    `Benchmark to beat (APPROVED, sourced figure): ${benchLine}`,
+    `Horizon: ${profile.hurdle || "(not specified)"}`,
+    `Risk tolerance & hard rules: ${profile.risk || "(not provided)"}`
+  ].join("\n");
+
+  return `You are a top-tier investor's diligence analyst — sceptical, evidence-driven, in the tradition of Buffett, Munger, Marks and Lynch. Your default answer is "no" until the material earns a "yes". You will score one investment opportunity for the investor whose mandate is below.
+
+INVESTOR MANDATE
+${prof}
+
+ABSOLUTE RULES (a savvy investor's discipline — do not break):
+1. Use ONLY facts present in the provided opportunity (text and/or image). Do not invent, estimate, or infer figures, financials, names, dates, market sizes, or comparables. If a datum is not stated, treat it as "Not stated".
+2. Never substitute industry averages, typical multiples, or assumed valuations for the OPPORTUNITY's own missing data. The ONE exception is the benchmark figure in the mandate above: it is an approved, sourced input, so you MAY use that stated S&P 500 return as the hurdle when judging "market_beating". You still must not invent the opportunity's own return, growth, margin, or financial figures.
+3. For a criterion whose judgement depends on data the material does not provide, set "assessable": false, "score": null, leave "evidence" empty, and record what is missing in "gaps".
+4. "competence_fit" and "portfolio_fit" are judged ONLY against the mandate above. If the relevant mandate field is "(not provided)", that criterion is "assessable": false.
+5. Every item in "evidence" must be traceable to something the material actually says. Quote or tightly paraphrase; keep each to one short line.
+6. Be terse. Do not editorialise or hedge with filler.
+
+Score each criterion 0–10 where sensible (0 = strongly negative evidence, 5 = neutral/mixed, 10 = strongly positive), using ONLY these keys:
+${wLines}
+
+Return ONE JSON object and nothing else — no prose, no markdown fences. Schema:
+{
+ "asset_name": string,               // as stated, else "Not stated"
+ "asset_type": string,               // "Public equity" | "Private / startup" | "Real estate" | "Crypto / digital asset" | "Fund / other" | "Unclear"
+ "one_line": string,                 // neutral one-sentence description of what this is, from the material only
+ "criteria": [
+   { "key": string, "assessable": boolean, "score": number|null,
+     "evidence": [string], "gaps": [string], "rationale": string }  // rationale: one sentence
+ ],
+ "red_flags": [string],              // concrete warning signs present in the material; [] if none
+ "due_diligence": [string],          // the sharpest unanswered questions to resolve before committing
+ "bull_case": string,                // strongest honest case FOR, grounded in the material
+ "bear_case": string,                // inversion — how this most plausibly loses money
+ "market_beating_view": string       // compare the opportunity's plausible return to the APPROVED benchmark figure in the mandate; you may cite that benchmark number. If the opportunity states no basis for its own expected return, say the comparison can't be made and mark the market_beating criterion not assessable.
+}
+Include an entry in "criteria" for every key listed above, in that order. Your entire reply must be the JSON object only: the first character is { and the last character is }, with no text, explanation, or code fences before or after.`;
+}
+
+/* ---------- scoring ---------- */
+document.getElementById("scoreBtn").addEventListener("click", ()=>runScore(false));
+
+/* ---------- extract from a website link (server-side web_fetch) ---------- */
+async function extractFromLink(){
+  const url=(document.getElementById("linkUrl").value||"").trim();
+  const st=document.getElementById("extractStatus");
+  if(!/^https?:\/\/[^\s.]+\.[^\s]+/.test(url)){ st.textContent="Enter a full URL starting with http:// or https://"; st.style.color="var(--rust)"; return; }
+  if(!getKey()){ toast("Add your Anthropic API key in Settings first","err"); document.querySelector('.tab[data-view="settings"]').click(); return; }
+  const btn=document.getElementById("extractBtn"); const old=btn.textContent; btn.disabled=true; btn.innerHTML='<span class="spin"></span> Fetching…';
+  st.textContent="Fetching the page and extracting the relevant facts…"; st.style.color="var(--muted)";
+  try{
+    const prompt="Use the web_fetch tool to retrieve the content at this URL, then extract ONLY investment-relevant facts that are actually present on the page.\nURL: "+url+"\n\nInclude, where the page states them: business or asset name, what it does, sector, location, asking price, revenue, cash flow or profit, other financials, growth, years established, reason for selling, deal terms, and any stated risks. Do NOT invent, infer, or estimate anything not on the page, and do NOT bring in information from other sources — only this fetched page. If a fact is not present, omit it. If the page could not be retrieved, was empty, or sat behind a login or paywall, say so plainly and report only what was actually accessible. Output a concise, readable brief in plain text (not JSON), headed with the source URL.";
+    const resp=await fetch("https://api.anthropic.com/v1/messages",{
+      method:"POST", headers:fetchHeaders(),
+      body:JSON.stringify({ model:getModel(), max_tokens:2000,
+        messages:[{role:"user",content:prompt}],
+        tools:[{type:"web_fetch_20250910",name:"web_fetch",max_uses:5}] })
+    });
+    if(!resp.ok){ let d=""; try{const eb=await resp.json(); d=eb&&eb.error&&eb.error.message?(" — "+eb.error.message):"";}catch(e){} throw new Error("Fetch failed ("+resp.status+")"+d); }
+    const data=await resp.json();
+    const txt=(data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("\n").trim();
+    if(!txt) throw new Error(data.stop_reason==="pause_turn"?"The fetch didn't finish in one pass — click Extract again to continue.":"No readable content came back from that page.");
+    const box=document.getElementById("inputText");
+    box.value = box.value.trim() ? (box.value.trim()+"\n\n— Extracted from "+url+" —\n"+txt) : txt;
+    st.textContent="Extracted — review the text above, edit if needed, then Score it."; st.style.color="var(--pine)";
+  }catch(err){
+    console.error(err);
+    st.innerHTML=escapeHtml(err.message||String(err))+' <span style="color:var(--muted-2)">— the page may be login-walled or JS-heavy, or your model may not support web fetch. Paste the details manually instead.</span>';
+    st.style.color="var(--rust)";
+  }finally{ btn.disabled=false; btn.textContent=old; }
+}
+document.getElementById("extractBtn").addEventListener("click", extractFromLink);
+/* ---------- keep the screen awake while scoring ----------
+   iOS suspends a backgrounded/locked page and cancels its in-flight request.
+   The Wake Lock API prevents the *auto*-lock during a score; if the phone is
+   locked manually or the app is backgrounded anyway, we retry once on return. */
+let wakeLock=null, scoringInFlight=false, wasHiddenDuringScore=false, autoRetryArmed=false;
+async function acquireWake(){
+  try{ if("wakeLock" in navigator && document.visibilityState==="visible"){ wakeLock=await navigator.wakeLock.request("screen"); } }
+  catch(e){ /* denied or unsupported — degrade quietly */ }
+}
+async function releaseWake(){ try{ if(wakeLock){ await wakeLock.release(); } }catch(e){} wakeLock=null; }
+document.addEventListener("visibilitychange",()=>{
+  if(document.visibilityState==="hidden"){ if(scoringInFlight) wasHiddenDuringScore=true; return; }
+  if(scoringInFlight && !wakeLock) acquireWake();            // wake locks drop when hidden — take it back
+  if(autoRetryArmed){ autoRetryArmed=false; toast("Resuming the score…"); runScore(true); }
+});
+
+async function runScore(isRetry){
+  const text=inputText.value.trim();
+  if(!text && !pendingImages.length){ toast("Paste some text or add a screenshot first","err"); return; }
+  if(!getKey()){ toast("Add your Anthropic API key in Settings first","err"); document.querySelector('.tab[data-view="settings"]').click(); return; }
+  lastRawResponse=""; lastStopReason=""; wasHiddenDuringScore=false; scoringInFlight=true; acquireWake();
+  const btn=document.getElementById("scoreBtn"); btn.disabled=true; btn.innerHTML='<span class="spin"></span> Reading & scoring…';
+  document.getElementById("result").innerHTML=`<div class="panel pad" style="margin-top:16px"><div style="display:flex;align-items:center;gap:12px"><span class="spin"></span><div><b>${isRetry?"Retrying the score…":"Scoring…"}</b><div class="hint" style="margin-top:4px">Keep Sharkfolio open — iOS cancels requests from apps sent to the background. With several images this can take up to a minute.</div></div></div></div>`;
+
+  const content=[];
+  pendingImages.forEach(im=>content.push({type:"image",source:{type:"base64",media_type:im.media_type,data:im.b64}}));
+  content.push({type:"text",text: buildPrompt() + "\n\nOPPORTUNITY MATERIAL:\n" + (text || "(the material is in the attached image(s))")});
+
+  try{
+    const resp=await fetch("https://api.anthropic.com/v1/messages",{
+      method:"POST", headers:apiHeaders(),
+      body:JSON.stringify({ model:getModel(), max_tokens:8000,
+        messages:[{role:"user",content}] })
+    });
+    if(!resp.ok){
+      let detail=""; try{ const eb=await resp.json(); detail=eb&&eb.error&&eb.error.message?(" — "+eb.error.message):""; }catch(e){}
+      throw new Error((resp.status===401?"Anthropic rejected the request (401): check your API key and model string in Settings":"API returned "+resp.status)+detail);
+    }
+    const data=await resp.json();
+    let raw=(data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("\n").trim();
+    if(!raw) throw new Error("The model returned no text to score.");
+    const parsed=parseJson(raw);
+    if(!parsed){
+      lastRawResponse=raw; lastStopReason=data.stop_reason||"";
+      throw new Error(data.stop_reason==="max_tokens"
+        ? "The response was cut off before a complete scorecard was returned."
+        : "Could not read a scorecard from the response.");
+    }
+    const scored=computeScore(parsed);
+    scored.repaired = lastParseWasRepaired || data.stop_reason==="max_tokens";
+    renderResult(scored);
+    saveToHistory(scored);
+  }catch(err){
+    console.error(err);
+    let msg=err.message||String(err);
+    const netFail=/load failed|failed to fetch|networkerror|network request failed|aborted/i.test(msg);
+    if(netFail && wasHiddenDuringScore && !isRetry){
+      if(document.visibilityState==="visible"){
+        msg="The app was interrupted mid-request — iOS cancels these. Retrying now…";
+        toast("Interrupted — retrying the score");
+        setTimeout(()=>runScore(true), 500);          // page is back; just run it again
+      } else {
+        autoRetryArmed=true;                          // still away; resume on return
+        msg="The screen locked mid-request, which iOS cancels. Sharkfolio will retry automatically when you reopen it.";
       }
-    </script>
-  </body>
+    } else if(netFail && wasHiddenDuringScore){
+      msg="Interrupted again while running. Keep the app open and tap Score it — with several images a score can take up to a minute.";
+    } else if(netFail){
+      msg="The request didn't reach Anthropic — usually the payload was too large or the connection dropped. Try fewer images, or score in two batches.";
+    }
+    const diag = lastRawResponse
+      ? `<details style="margin-top:12px"><summary style="cursor:pointer;color:var(--muted);font-size:12px">Show what the model actually returned${lastStopReason?" (stop reason: "+escapeHtml(lastStopReason)+")":""}</summary><pre class="mono" style="white-space:pre-wrap;word-break:break-word;font-size:11.5px;color:var(--muted);background:var(--ink);border:1px solid var(--line);border-radius:4px;padding:10px;margin-top:8px;max-height:280px;overflow:auto">${escapeHtml(lastRawResponse.slice(0,2000))}</pre></details>` : "";
+    document.getElementById("result").innerHTML=`<div class="panel pad" style="margin-top:16px;border-color:var(--rust-dim)"><b style="color:var(--rust)">Scoring failed.</b><div class="hint" style="margin-top:6px">${escapeHtml(msg)} Try again, or paste a fuller description of the opportunity.</div>${diag}</div>`;
+  }finally{
+    scoringInFlight=false; releaseWake();
+    btn.disabled=false; btn.textContent="Score it";
+  }
+}
+let lastParseWasRepaired=false, lastRawResponse="", lastStopReason="";
+/* Close any open strings/brackets and drop a dangling comma, so a response cut
+   off mid-JSON can still be salvaged. Returns a candidate string or null. */
+function closeOpen(s){
+  let inStr=false, esc=false; const stack=[];
+  for(let i=0;i<s.length;i++){
+    const ch=s[i];
+    if(inStr){ if(esc){esc=false;} else if(ch==="\\"){esc=true;} else if(ch==='"'){inStr=false;} continue; }
+    if(ch==='"'){ inStr=true; continue; }
+    if(ch==="{"||ch==="[") stack.push(ch==="{"?"}":"]");
+    else if(ch==="}"||ch==="]") stack.pop();
+  }
+  let out=s;
+  if(inStr) out+='"';
+  out=out.replace(/,\s*$/,"");
+  if(/[:,]\s*$/.test(out)) return null;         // dangling key or separator — caller trims further
+  for(let i=stack.length-1;i>=0;i--) out+=stack[i];
+  return out;
+}
+function parseJson(raw){
+  lastParseWasRepaired=false;
+  if(!raw) return null;
+  let s=String(raw).replace(/```json/gi,"").replace(/```/g,"").trim();
+  try{ return JSON.parse(s); }catch(e){}
+  const a=s.indexOf("{"), b=s.lastIndexOf("}");
+  if(a>-1&&b>a){ try{ return JSON.parse(s.slice(a,b+1)); }catch(e){} }
+  // Truncated? Trim back to successive structural boundaries and try to close it.
+  if(a>-1){
+    let frag=s.slice(a);
+    for(let n=0;n<60 && frag.length>2;n++){
+      const cand=closeOpen(frag);
+      if(cand){ try{ const o=JSON.parse(cand); lastParseWasRepaired=true; return o; }catch(e){} }
+      const cut=Math.max(frag.lastIndexOf(","),frag.lastIndexOf("}"),frag.lastIndexOf("]"),frag.lastIndexOf('"'));
+      if(cut<=0) break;
+      frag=frag.slice(0,cut);
+    }
+  }
+  return null;
+}
+
+/* ---------- deterministic maths (done here, not by the model) ---------- */
+function computeScore(p){
+  const byKey=Object.fromEntries((p.criteria||[]).map(c=>[c.key,c]));
+  const totalW=CRITERIA.reduce((s,c)=>s+(profile.weights[c.key]||0),0)||1;
+  let wSum=0, contrib=0;
+  const rows=CRITERIA.map(c=>{
+    const m=byKey[c.key]||{};
+    const w=profile.weights[c.key]||0;
+    const assessable = m.assessable===true && typeof m.score==="number";
+    if(assessable){ wSum+=w; contrib += (m.score/10)*w; }
+    return {
+      key:c.key, label:c.label, desc:c.desc, weight:w, wpct:(w/totalW*100),
+      assessable, score: assessable? m.score : null,
+      evidence: Array.isArray(m.evidence)?m.evidence:[],
+      gaps: Array.isArray(m.gaps)?m.gaps:[],
+      rationale: m.rationale||"",
+      fromProfile: !!c.profile
+    };
+  });
+  const composite = wSum>0 ? Math.round(contrib/wSum*100) : 0;
+  const coverage = Math.round(wSum/totalW*100);
+  let verdict,cls;
+  if(coverage<35){ verdict="Insufficient data"; cls="grey"; }
+  else if(composite>=65){ verdict="Strong candidate"; cls="pine"; }
+  else if(composite>=40){ verdict="Investigate further"; cls="brass"; }
+  else { verdict="Pass"; cls="rust"; }
+  let confidence = coverage>=70?"High":coverage>=45?"Medium":"Low";
+  if(coverage<35) confidence="Very low";
+  return {
+    v:APP_VERSION, ts:Date.now(),
+    asset_name:p.asset_name||"Not stated", asset_type:p.asset_type||"Unclear", one_line:p.one_line||"",
+    composite, coverage, verdict, cls, confidence,
+    rows, red_flags:p.red_flags||[], due_diligence:p.due_diligence||[],
+    bull_case:p.bull_case||"", bear_case:p.bear_case||"", market_beating_view:p.market_beating_view||""
+  };
+}
+
+/* ---------- gauge (signature) ---------- */
+function gaugeSVG(score,coverage,cls){
+  const cx=130,cy=128,rO=104,rI=80, W=260,H=150;
+  const col = cls==="pine"?"#4E9B7A":cls==="brass"?"#C9A24B":cls==="rust"?"#C0603F":"#8AA0A0";
+  const pt=(r,deg)=>{const a=(180-deg)*Math.PI/180;return[cx+r*Math.cos(a),cy-r*Math.sin(a)];};
+  const arc=(r,d0,d1)=>{const[x0,y0]=pt(r,d0),[x1,y1]=pt(r,d1);const large=(d1-d0)>180?1:0;return`M ${x0} ${y0} A ${r} ${r} 0 ${large} 1 ${x1} ${y1}`;};
+  const needleDeg=180*(score/100);
+  const[nx,ny]=pt(rO-10,needleDeg);
+  const covDeg=180*(coverage/100);
+  // zone ticks at 40 and 65
+  const z1=180*0.40, z2=180*0.65;
+  const[tx1a,ty1a]=pt(rO+2,z1),[tx1b,ty1b]=pt(rI-2,z1);
+  const[tx2a,ty2a]=pt(rO+2,z2),[tx2b,ty2b]=pt(rI-2,z2);
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Conviction ${score} of 100, coverage ${coverage} percent">
+    <path d="${arc(rO,0,180)}" fill="none" stroke="#1e373f" stroke-width="12" stroke-linecap="round"/>
+    <path d="${arc(rO,0,needleDeg)}" fill="none" stroke="${col}" stroke-width="12" stroke-linecap="round"/>
+    <path d="${arc(rI,0,180)}" fill="none" stroke="#152b32" stroke-width="7" stroke-linecap="round"/>
+    <path d="${arc(rI,0,covDeg)}" fill="none" stroke="#4E9B7A" stroke-width="7" stroke-linecap="round" opacity="0.9"/>
+    <line x1="${tx1a}" y1="${ty1a}" x2="${tx1b}" y2="${ty1b}" stroke="#0B1418" stroke-width="2"/>
+    <line x1="${tx2a}" y1="${ty2a}" x2="${tx2b}" y2="${ty2b}" stroke="#0B1418" stroke-width="2"/>
+    <line x1="${cx}" y1="${cy}" x2="${nx}" y2="${ny}" stroke="${col}" stroke-width="2.5"/>
+    <circle cx="${cx}" cy="${cy}" r="5" fill="${col}"/>
+    <text x="${cx}" y="${cy-30}" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="34" font-weight="600" fill="#ECE7D8">${score}</text>
+    <text x="${cx}" y="${cy-12}" text-anchor="middle" font-family="Inter, sans-serif" font-size="9.5" letter-spacing="2" fill="#8AA0A0">CONVICTION</text>
+  </svg>`;
+}
+
+/* ---------- render result ---------- */
+function renderResult(r, mountId){
+  const covNote = r.coverage<35
+    ? "Below the 35% floor — verdict withheld. Provide more of the material to get a real read."
+    : (r.coverage<60 ? "Thin coverage — treat the score as provisional." : "Solid coverage of the framework.");
+  const rowsHtml=r.rows.map((c,i)=>{
+    const col = !c.assessable ? "var(--muted-2)" : c.score>=6.5?"var(--pine)":c.score>=4?"var(--brass)":"var(--rust)";
+    const barcol = !c.assessable ? "var(--line)" : col;
+    const chip = c.assessable? c.score.toFixed(1)+"/10" : "N/A";
+    const fill = c.assessable? (c.score*10) : 0;
+    const evi = c.evidence.length? `<div class="evi"><h5>Evidence in the material</h5><ul>${c.evidence.map(e=>`<li>${escapeHtml(e)}</li>`).join("")}</ul></div>`:"";
+    const gap = c.gaps.length? `<div class="gap"><h5>Not stated / to verify</h5><ul>${c.gaps.map(e=>`<li>${escapeHtml(e)}</li>`).join("")}</ul></div>`:"";
+    const na = !c.assessable? `<div class="na">Not assessable from what was provided${c.fromProfile?" (or your Playbook is empty for this)":""} — excluded from the weighted score.</div>`:"";
+    return `<div class="crit" data-i="${i}">
+      <div class="crit-head">
+        <div class="crit-name">${c.label}${c.fromProfile?' <span class="mono" style="color:var(--brass);font-size:10.5px">· Playbook</span>':''}<small>${c.desc}</small></div>
+        <div class="bar"><i style="width:${fill}%;background:${barcol}"></i></div>
+        <div class="wt">wt ${c.weight}</div>
+        <div class="score-chip" style="color:${col};border-color:${col}33">${chip}</div>
+      </div>
+      <div class="crit-body">
+        ${c.rationale?`<div class="rationale">${escapeHtml(c.rationale)}</div>`:""}
+        ${evi}${gap}${na}
+      </div>
+    </div>`;
+  }).join("");
+
+  const flags = r.red_flags.length? r.red_flags.map(x=>`<li>${escapeHtml(x)}</li>`).join("") : `<li class="na">None flagged in the material.</li>`;
+  const dd = r.due_diligence.length? r.due_diligence.map(x=>`<li>${escapeHtml(x)}</li>`).join("") : `<li class="na">No open questions returned.</li>`;
+
+  const html=`<div class="panel pad-lg" style="margin-top:16px">
+    <div class="verdict-head">
+      <div class="gauge-box">
+        ${gaugeSVG(r.composite,r.coverage,r.cls)}
+        <div class="gauge-legend"><span>0</span><span style="color:var(--pine)">◐ coverage ${r.coverage}%</span><span>100</span></div>
+      </div>
+      <div class="verdict-txt">
+        <div class="eyebrow">Verdict</div>
+        <div class="verdict-tag"><span class="pill ${r.cls}">${r.verdict}</span></div>
+        <div class="one-line">${escapeHtml(r.one_line||"—")}</div>
+        <div class="asset-meta">${escapeHtml(r.asset_name)} · ${escapeHtml(r.asset_type)}</div>
+        <div class="kv">Conviction <b>${r.composite}/100</b> &nbsp;·&nbsp; Coverage <b>${r.coverage}%</b> &nbsp;·&nbsp; Confidence <b>${r.confidence}</b></div>
+      </div>
+    </div>
+    <div class="cov"><span class="mono" style="color:var(--pine)">◐</span><div><b>Evidence coverage ${r.coverage}%.</b> ${covNote}</div></div>
+    ${r.repaired?`<div class="cov" style="border-color:var(--brass-dim)"><span class="mono" style="color:var(--brass)">!</span><div><b>Partial response.</b> The model's reply was cut short; this scorecard was rebuilt from the portion that came through, so some criteria may be missing rather than genuinely unassessable. Re-run for a complete read.</div></div>`:""}
+
+    <div class="sec-title">Scorecard <span class="rule"></span></div>
+    ${rowsHtml}
+
+    <div class="sec-title">Bull vs bear <span class="rule"></span></div>
+    <div class="case bull"><h5>Bull case</h5><p>${escapeHtml(r.bull_case||"Not returned.")}</p></div>
+    <div class="case bear"><h5>Bear case (inversion)</h5><p>${escapeHtml(r.bear_case||"Not returned.")}</p></div>
+    <div class="case" style="border-color:var(--brass-dim)"><h5>Can it beat ${escapeHtml(benchLabelShort())}?</h5><p>${escapeHtml(r.market_beating_view||"Not returned.")}</p></div>
+
+    <div class="twocol" style="margin-top:22px">
+      <div class="listcard flags"><h4>Red flags</h4><ul>${flags}</ul></div>
+      <div class="listcard dd"><h4>Do this before committing</h4><ul>${dd}</ul></div>
+    </div>
+  </div>`;
+
+  const mount = mountId? document.getElementById(mountId) : document.getElementById("result");
+  mount.innerHTML=html;
+  mount.querySelectorAll(".crit").forEach(el=>{
+    el.querySelector(".crit-head").addEventListener("click",()=>el.classList.toggle("open"));
+  });
+  mount.scrollIntoView({behavior:"smooth",block:"start"});
+}
+
+/* ---------- history ---------- */
+async function saveToHistory(r){
+  history.unshift({id:r.ts+"", ts:r.ts, asset_name:r.asset_name, composite:r.composite, coverage:r.coverage, verdict:r.verdict, cls:r.cls, full:r});
+  history=history.slice(0,100);
+  await storeSet("shark:history",history); renderHistory();
+}
+function renderHistory(){
+  const wrap=document.getElementById("historyList");
+  if(!history.length){ wrap.innerHTML=`<div class="empty"><div class="big">No evaluations yet.</div>Score something on the Evaluate tab and it lands here.</div>`; return; }
+  wrap.innerHTML=history.map(h=>{
+    const d=new Date(h.ts); const ds=d.toLocaleDateString()+" "+d.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
+    const col = h.cls==="pine"?"var(--pine)":h.cls==="brass"?"var(--brass)":h.cls==="rust"?"var(--rust)":"var(--muted)";
+    return `<div class="hrow" data-id="${h.id}">
+      <div class="hscore" style="color:${col}">${h.composite}</div>
+      <div class="hmeta"><div class="nm">${escapeHtml(h.asset_name)}</div><div class="dt">${ds} · cov ${h.coverage}%</div></div>
+      <span class="pill ${h.cls}">${h.verdict}</span>
+      <div class="hbtns"><button class="hicon" data-edit="${h.id}" title="Rename">Rename</button><button class="hicon danger" data-del="${h.id}" title="Delete">Delete</button></div>
+    </div>`;
+  }).join("");
+  wrap.querySelectorAll(".hrow").forEach(row=>{
+    row.addEventListener("click",e=>{
+      if(e.target.closest("button")||e.target.closest("input")) return;   // don't open while renaming/deleting
+      const h=history.find(x=>x.id===row.dataset.id); if(!h) return;
+      document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));
+      document.querySelector('.tab[data-view="evaluate"]').classList.add("active");
+      document.querySelectorAll(".view").forEach(x=>x.classList.remove("show"));
+      document.getElementById("view-evaluate").classList.add("show");
+      renderResult(h.full);
+    });
+  });
+  wrap.querySelectorAll("[data-del]").forEach(b=>b.addEventListener("click",async e=>{
+    e.stopPropagation(); history=history.filter(x=>x.id!==b.dataset.del); await storeSet("shark:history",history); renderHistory(); toast("Deleted");
+  }));
+  wrap.querySelectorAll("[data-edit]").forEach(b=>b.addEventListener("click",e=>{
+    e.stopPropagation();
+    const row=b.closest(".hrow"), h=history.find(x=>x.id===b.dataset.edit); if(!row||!h) return;
+    if(row.querySelector(".hedit")){ row.querySelector(".hedit").blur(); return; }   // second tap = save
+    const nm=row.querySelector(".nm"); if(!nm) return;
+    row.classList.add("editing"); b.textContent="Save";
+    const inp=document.createElement("input");
+    inp.type="text"; inp.className="hedit"; inp.value=h.asset_name||""; inp.setAttribute("aria-label","Pitch name");
+    inp.autocapitalize="sentences"; inp.autocomplete="off"; inp.spellcheck=false; inp.enterKeyHint="done";
+    nm.replaceWith(inp);
+    setTimeout(()=>{ inp.focus(); inp.select(); },0);   // iOS needs focus after the node is laid out
+    let done=false;
+    const save=async()=>{
+      if(done) return; done=true;
+      const v=inp.value.trim();
+      if(v && v!==h.asset_name){
+        h.asset_name=v; if(h.full) h.full.asset_name=v;      // keep the stored scorecard in step
+        await storeSet("shark:history",history); renderHistory(); toast("Renamed");
+      } else { renderHistory(); }
+    };
+    inp.addEventListener("keydown",ev=>{ if(ev.key==="Enter"){ev.preventDefault();save();} else if(ev.key==="Escape"){done=true;renderHistory();} });
+    inp.addEventListener("blur",save);
+    inp.addEventListener("click",ev=>ev.stopPropagation());
+  }));
+}
+document.getElementById("wipeBtn").addEventListener("click",async()=>{
+  if(!history.length) return;
+  history=[]; await storeSet("shark:history",history); renderHistory(); toast("History cleared");
+});
+document.getElementById("exportBtn").addEventListener("click",()=>{
+  if(!history.length){ toast("Nothing to export","err"); return; }
+  const blob=new Blob([JSON.stringify(history,null,2)],{type:"application/json"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
+  a.download="sharkfolio-history.json"; a.click(); URL.revokeObjectURL(a.href);
+});
+
+/* ---------- import (merge by entry id; never overwrites) ---------- */
+function validEntry(e){
+  if(!e || typeof e!=="object") return null;
+  const full = (e.full && typeof e.full==="object") ? e.full : null;
+  if(!full) return null;
+  const ts = Number(e.ts) || Number(full.ts) || 0;
+  if(!ts) return null;
+  const num=v=>{ const n=Number(v); return isFinite(n)?n:0; };
+  return {
+    id: String(e.id || ts),
+    ts,
+    asset_name: String(e.asset_name || full.asset_name || "Not stated"),
+    composite: num(e.composite!=null?e.composite:full.composite),
+    coverage:  num(e.coverage!=null?e.coverage:full.coverage),
+    verdict:   String(e.verdict || full.verdict || "—"),
+    cls:       String(e.cls || full.cls || "grey"),
+    full
+  };
+}
+document.getElementById("importBtn").addEventListener("click",()=>document.getElementById("importFile").click());
+document.getElementById("importFile").addEventListener("change",e=>{
+  const f=e.target.files && e.target.files[0];
+  e.target.value="";                                  // allow re-importing the same file
+  if(!f) return;
+  const rd=new FileReader();
+  rd.onerror=()=>toast("Could not read that file","err");
+  rd.onload=async()=>{
+    let data;
+    try{ data=JSON.parse(rd.result); }catch(err){ toast("That file isn't valid JSON","err"); return; }
+    const raw = Array.isArray(data) ? data : (data && Array.isArray(data.history) ? data.history : null);
+    if(!raw){ toast("No Sharkfolio history found in that file","err"); return; }
+    const have=new Set(history.map(h=>h.id));
+    let added=0, dupes=0, bad=0;
+    for(const item of raw){
+      const v=validEntry(item);
+      if(!v){ bad++; continue; }
+      if(have.has(v.id)){ dupes++; continue; }         // keep what's already here
+      history.push(v); have.add(v.id); added++;
+    }
+    history.sort((a,b)=>b.ts-a.ts);
+    const before=history.length; history=history.slice(0,100);
+    const trimmed=before-history.length;
+    await storeSet("shark:history",history); renderHistory();
+    const parts=[added+" added"];
+    if(dupes) parts.push(dupes+" already here");
+    if(bad) parts.push(bad+" unreadable");
+    if(trimmed) parts.push(trimmed+" trimmed past the 100 limit");
+    toast(parts.join(" · "), added?undefined:"err");
+  };
+  rd.readAsText(f);
+});
+
+/* ---------- utils ---------- */
+function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+
+/* ---------- PWA service worker ---------- */
+if("serviceWorker" in navigator){ window.addEventListener("load",()=>{ navigator.serviceWorker.register("./service-worker.js").catch(()=>{}); }); }
+let toastT;
+function toast(msg,kind){ const t=document.getElementById("toast"); t.textContent=msg; t.className="toast show"+(kind==="err"?" err":""); clearTimeout(toastT); toastT=setTimeout(()=>t.className="toast"+(kind==="err"?" err":""),2600); }
+</script>
+</body>
 </html>
