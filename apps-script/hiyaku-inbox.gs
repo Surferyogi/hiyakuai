@@ -31,7 +31,7 @@ var BATCH_SIZE       = 1;    // emails per POST. Was 3, which exceeded the
                              // Edge Function's 150s idle limit once links were
                              // restored and converted text grew 10x.
 var MAX_RUNTIME_MS   = 4.5 * 60 * 1000;
-var MAX_EMAILS_PER_RUN = 4;  // bodies fetched per run. Each email is one AI
+var MAX_EMAILS_PER_RUN = 15;  // bodies fetched per run. Each email is one AI
                              // call of roughly 60-90s, so more than this is
                              // fetched and then discarded when time runs out.
 
