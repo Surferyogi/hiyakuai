@@ -92,6 +92,20 @@ function stripHtml(html: string): string {
     .trim();
 }
 
+// Non-reversible fingerprint of a secret. Lets us tell whether a value has
+// changed between deploys without ever exposing it.
+async function fingerprint(value: string): Promise<string> {
+  if (!value) return "";
+  const buf = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(value),
+  );
+  return Array.from(new Uint8Array(buf))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, 12);
+}
+
 function norm(s: string): string {
   return (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
@@ -493,6 +507,47 @@ async function handleDigest(userId: string, body: Record<string, unknown>) {
   return json({ ok: true, dryRun, count: list.length, jobs: list });
 }
 
+// -------------------------------------------------------------------- ping
+//
+// Minimal live call to Anthropic: 1 token, no Library data, no email content.
+// Returns the HTTP status and the raw error body so an auth failure can be
+// distinguished from a model, quota or network problem.
+
+async function handlePing() {
+  const apiKey = env("ANTHROPIC_API_KEY");
+  if (!apiKey) return json({ ok: false, error: "ANTHROPIC_API_KEY is empty" });
+  const model = env("HIYAKU_INBOX_MODEL", MODEL_DEFAULT);
+  let status = 0;
+  let body = "";
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 1,
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    });
+    status = res.status;
+    body = (await res.text()).slice(0, 400);
+  } catch (err) {
+    return json({ ok: false, error: `network: ${String(err)}` });
+  }
+  return json({
+    ok: status === 200,
+    status,
+    model,
+    keyFingerprint: await fingerprint(apiKey),
+    keyLength: apiKey.length,
+    response: body,
+  });
+}
+
 // ------------------------------------------------------------------ status
 
 async function handleStatus(userId: string) {
@@ -515,6 +570,7 @@ async function handleStatus(userId: string) {
       anthropicKeyPresent: anthropicKey.length > 0,
       anthropicKeyLength: anthropicKey.length,
       anthropicKeyPrefixOk: anthropicKey.startsWith("sk-ant-"),
+      anthropicKeyFingerprint: await fingerprint(anthropicKey),
       model: env("HIYAKU_INBOX_MODEL", MODEL_DEFAULT),
       serviceKeyPresent: env("SUPABASE_SERVICE_ROLE_KEY").length > 0,
       supabaseUrlPresent: env("SUPABASE_URL").length > 0,
@@ -554,9 +610,11 @@ Deno.serve(async (req: Request) => {
         return await handleIngest(userId, body);
       case "digest":
         return await handleDigest(userId, body);
+      case "ping":
+        return await handlePing();
       default:
         return json(
-          { ok: false, error: "action must be status, ingest or digest" },
+          { ok: false, error: "action must be status, ping, ingest or digest" },
           400,
         );
     }
