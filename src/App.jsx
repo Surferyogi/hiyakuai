@@ -4,7 +4,7 @@ import {
   Document, Packer, Paragraph, TextRun, AlignmentType, BorderStyle, HeadingLevel, convertInchesToTwip,
 } from 'docx'
 
-export const APP_VERSION = 'v2026:07:29-20:45'
+export const APP_VERSION = 'v2026:08:05-15:23'
 const STATUSES = ['draft','submitted','responded','interview','offer','rejected','closed']
 const DEFAULT_MODEL = 'claude-sonnet-4-6'
 
@@ -293,6 +293,7 @@ export default function App() {
   const [session, setSession] = useState(null)
   const [tab, setTab] = useState('apps')
   const [toast, setToast] = useState('')
+  const [inboxNew, setInboxNew] = useState(0)
 
   useEffect(() => {
     if (!supabase) return
@@ -300,6 +301,17 @@ export default function App() {
     const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s))
     return () => sub.subscription.unsubscribe()
   }, [])
+
+  // Unread count for the Inbox tab badge. Counts only staged rows that the
+  // rule triage marked "look" and that have not been reviewed yet.
+  const refreshInboxCount = async () => {
+    if (!supabase) return
+    const { count, error } = await supabase.from('hiyaku_inbox_jobs')
+      .select('id', { count: 'exact', head: true })
+      .eq('state', 'new').eq('triage', 'look')
+    if (!error) setInboxNew(count || 0)
+  }
+  useEffect(() => { if (session) refreshInboxCount() }, [session, tab])
 
   const notify = (m) => { setToast(m); setTimeout(() => setToast(''), 3000) }
 
@@ -314,13 +326,24 @@ export default function App() {
       </div>
       {toast && <div className="card" style={{ borderColor: 'var(--teal)' }}>{toast}</div>}
       {tab === 'apps' && <Applications session={session} notify={notify} />}
+      {tab === 'inbox' && <Inbox session={session} notify={notify} onChange={refreshInboxCount} />}
       {tab === 'new' && <NewApplication session={session} notify={notify} done={() => setTab('apps')} />}
       {tab === 'library' && <Library session={session} notify={notify} />}
       {tab === 'settings' && <Settings session={session} notify={notify} />}
       <nav className="tabbar no-print">
-        {[['apps', '📋', 'Applications'], ['new', '✨', 'New'], ['library', '📚', 'Library'], ['settings', '⚙️', 'Settings']].map(([k, ico, lbl]) => (
+        {[['apps', '📋', 'Applications'], ['inbox', '📥', 'Inbox'], ['new', '✨', 'New'], ['library', '📚', 'Library'], ['settings', '⚙️', 'Settings']].map(([k, ico, lbl]) => (
           <button key={k} className={tab === k ? 'active' : ''} onClick={() => setTab(k)}>
-            <span className="ico">{ico}</span>{lbl}
+            <span className="ico" style={{ position: 'relative', display: 'inline-block' }}>
+              {ico}
+              {k === 'inbox' && inboxNew > 0 && (
+                <span style={{
+                  position: 'absolute', top: -4, right: -10, minWidth: 16, height: 16,
+                  padding: '0 4px', borderRadius: 999, background: 'var(--teal)',
+                  color: '#04231f', fontSize: '.6rem', fontWeight: 800,
+                  lineHeight: '16px', textAlign: 'center',
+                }}>{inboxNew > 99 ? '99+' : inboxNew}</span>
+              )}
+            </span>{lbl}
           </button>
         ))}
       </nav>
@@ -376,6 +399,209 @@ function Login({ notify, toast }) {
       </div>
       <p className="muted small" style={{ marginTop: 14 }}>{APP_VERSION}</p>
     </div></div>
+  )
+}
+
+// ---------- Inbox (staged job alerts from Gmail) ----------
+// Read-only review surface over hiyaku_inbox_jobs. Nothing here produces a
+// suitability score: rows arrive with a rule-based triage bucket only. A real
+// assessment happens after promotion, in the New Application flow.
+const TRIAGE_META = {
+  look:  { label: 'Look',  color: 'var(--teal)' },
+  maybe: { label: 'Maybe', color: 'var(--muted)' },
+  skip:  { label: 'Skip',  color: 'var(--muted)' },
+}
+
+function SalaryLine({ job }) {
+  if (!job.salary_text) return <span className="muted small">Salary not stated</span>
+  if (job.salary_basis === 'platform_estimate') {
+    return <span className="small">{job.salary_text} <em className="muted">— platform estimate, not the employer figure</em></span>
+  }
+  if (job.salary_basis === 'posted') {
+    return <span className="small">{job.salary_text} <em className="muted">— posted</em></span>
+  }
+  return <span className="small">{job.salary_text}</span>
+}
+
+function Inbox({ session, notify, onChange }) {
+  const [rows, setRows] = useState([])
+  const [filter, setFilter] = useState('look')
+  const [loading, setLoading] = useState(true)
+  const [openId, setOpenId] = useState(null)
+  const [busy, setBusy] = useState(false)
+
+  const load = async () => {
+    setLoading(true)
+    const { data, error } = await supabase.from('hiyaku_inbox_jobs')
+      .select('*').order('created_at', { ascending: false }).limit(300)
+    if (error) notify(error.message); else setRows(data || [])
+    setLoading(false)
+  }
+  useEffect(() => { load() }, [])
+
+  const counts = useMemo(() => {
+    const c = { all: rows.length, look: 0, maybe: 0, skip: 0, dismissed: 0, promoted: 0 }
+    rows.forEach(r => {
+      if (r.state === 'dismissed') c.dismissed++
+      else if (r.state === 'promoted') c.promoted++
+      else c[r.triage] = (c[r.triage] || 0) + 1
+    })
+    return c
+  }, [rows])
+
+  const shown = useMemo(() => {
+    if (filter === 'all') return rows
+    if (filter === 'dismissed') return rows.filter(r => r.state === 'dismissed')
+    if (filter === 'promoted') return rows.filter(r => r.state === 'promoted')
+    return rows.filter(r => r.triage === filter && r.state !== 'dismissed' && r.state !== 'promoted')
+  }, [rows, filter])
+
+  const setState = async (job, state) => {
+    setBusy(true)
+    const { error } = await supabase.from('hiyaku_inbox_jobs')
+      .update({ state }).eq('id', job.id)
+    setBusy(false)
+    if (error) { notify(error.message); return }
+    await load(); if (onChange) onChange()
+  }
+
+  // Promote copies only fields that actually exist on the staged row. Nothing
+  // is inferred to fill a blank: an email-only row arrives with an empty
+  // job_description and must be completed by pasting the real posting.
+  const promote = async (job) => {
+    setBusy(true)
+    const sourceLabel = job.source + (job.job_url ? ` — ${job.job_url}` : '')
+    const { data, error } = await supabase.from('hiyaku_applications').insert({
+      user_id: session.user.id,
+      company: job.company || 'Not stated',
+      role_title: job.role_title || 'Not stated',
+      source: sourceLabel,
+      job_description: job.full_text || '',
+      location: job.location || '',
+      salary_range: job.salary_basis === 'posted' ? (job.salary_text || '') : '',
+      status: 'draft',
+    }).select('id').single()
+    if (error) { setBusy(false); notify(error.message); return }
+    const { error: e2 } = await supabase.from('hiyaku_inbox_jobs')
+      .update({ state: 'promoted', promoted_application_id: data.id }).eq('id', job.id)
+    setBusy(false)
+    if (e2) { notify(e2.message); return }
+    notify(job.full_text
+      ? 'Promoted with the full posting. Run the assessment in Applications.'
+      : 'Promoted. No full posting was available — paste it in before generating.')
+    setOpenId(null); await load(); if (onChange) onChange()
+  }
+
+  const open = rows.find(r => r.id === openId)
+
+  if (open) {
+    return (
+      <div>
+        <button className="ghost" onClick={() => setOpenId(null)}>← Back to Inbox</button>
+        <div className="card" style={{ marginTop: 10 }}>
+          <h2 style={{ marginBottom: 2 }}>{open.role_title || 'Not stated'}</h2>
+          <div className="muted small">{open.company || 'Not stated'} · {open.location || 'Location not stated'}</div>
+          <div className="row" style={{ marginTop: 10, gap: 8, flexWrap: 'wrap' }}>
+            <span className="small" style={{ padding: '3px 9px', borderRadius: 999, border: `1px solid ${TRIAGE_META[open.triage]?.color}`, color: TRIAGE_META[open.triage]?.color, fontWeight: 700 }}>
+              {TRIAGE_META[open.triage]?.label}
+            </span>
+            <span className="small" style={{ padding: '3px 9px', borderRadius: 999, border: '1px solid var(--line)', color: 'var(--muted)' }}>
+              via {open.source}
+            </span>
+            {open.full_text_source === 'mcf_api'
+              ? <span className="small" style={{ padding: '3px 9px', borderRadius: 999, border: '1px solid var(--line)', color: 'var(--muted)' }}>full posting retrieved</span>
+              : <span className="small" style={{ padding: '3px 9px', borderRadius: 999, border: '1px solid var(--line)', color: 'var(--muted)' }}>email only</span>}
+            {open.alumni_count !== null && open.alumni_count !== undefined && (
+              <span className="small" style={{ padding: '3px 9px', borderRadius: 999, border: '1px solid var(--line)', color: 'var(--muted)' }}>
+                {open.alumni_count} alumni
+              </span>
+            )}
+          </div>
+
+          <p style={{ marginTop: 12 }}><SalaryLine job={open} /></p>
+
+          <p className="muted small" style={{ marginTop: 10 }}>
+            <strong>Why it was flagged:</strong> {open.triage_reason || 'Not stated'}<br />
+            This is a routing decision from {open.triage_basis === 'full_text' ? 'the full posting' : 'the alert email alone'}, not a suitability assessment.
+          </p>
+
+          {open.job_url && (
+            <p style={{ marginTop: 10 }}>
+              <a href={open.job_url} target="_blank" rel="noreferrer">Open the original posting ↗</a>
+            </p>
+          )}
+
+          {open.full_text && (
+            <details style={{ marginTop: 12 }}>
+              <summary className="small">Full posting ({open.full_text.length} characters)</summary>
+              <pre style={{ whiteSpace: 'pre-wrap', fontSize: '.8rem', marginTop: 8 }}>{open.full_text}</pre>
+            </details>
+          )}
+
+          {open.raw_snippet && (
+            <details style={{ marginTop: 8 }}>
+              <summary className="small">Original email text this was read from</summary>
+              <pre style={{ whiteSpace: 'pre-wrap', fontSize: '.75rem', marginTop: 8, color: 'var(--muted)' }}>{open.raw_snippet}</pre>
+            </details>
+          )}
+
+          <div className="row" style={{ marginTop: 14, gap: 8, flexWrap: 'wrap' }}>
+            <button disabled={busy || open.state === 'promoted'} onClick={() => promote(open)}>
+              {open.state === 'promoted' ? 'Already promoted' : 'Promote to application'}
+            </button>
+            <button className="ghost" disabled={busy} onClick={() => setState(open, 'dismissed')}>Dismiss</button>
+          </div>
+          <p className="muted small" style={{ marginTop: 8 }}>
+            {open.full_text
+              ? 'The full posting was retrieved, so the assessment can run immediately after promotion.'
+              : 'No full posting is available for this source. Open the link, copy the posting, and paste it into the application before generating anything.'}
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <div className="card">
+        <h2>Inbox</h2>
+        <p className="muted small" style={{ marginTop: 4 }}>
+          Job alerts staged from Gmail. These carry a routing bucket only — no fit score.
+          Promote one to run a real assessment against your Library.
+        </p>
+        <div className="row" style={{ marginTop: 8, flexWrap: 'wrap' }}>
+          {['look', 'maybe', 'skip', 'promoted', 'dismissed', 'all'].map(f => (
+            <button key={f} className={filter === f ? '' : 'ghost'} style={{ padding: '5px 10px', fontSize: '.75rem' }}
+              onClick={() => setFilter(f)}>{f} ({counts[f] ?? 0})</button>
+          ))}
+        </div>
+      </div>
+
+      {loading && <p className="muted">Loading…</p>}
+      {!loading && shown.length === 0 && (
+        <p className="muted">Nothing here. Staged roles arrive from the Gmail sweep; if you have not run it yet, this stays empty.</p>
+      )}
+
+      {shown.map(j => (
+        <div key={j.id} className="list-item" onClick={() => setOpenId(j.id)} style={{ cursor: 'pointer' }}>
+          <div className="hstack">
+            <div>
+              <strong>{j.role_title || 'Not stated'}</strong>
+              <div className="muted small">{j.company || 'Not stated'} · {j.location || 'Location not stated'} · via {j.source}</div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
+              <span className="small" style={{ padding: '3px 9px', borderRadius: 999, border: `1px solid ${TRIAGE_META[j.triage]?.color}`, color: TRIAGE_META[j.triage]?.color, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                {TRIAGE_META[j.triage]?.label}
+              </span>
+              {j.alumni_count > 0 && <span className="muted small" style={{ whiteSpace: 'nowrap' }}>{j.alumni_count} alumni</span>}
+            </div>
+          </div>
+          <div className="muted small" style={{ marginTop: 6 }}>
+            <SalaryLine job={j} />
+          </div>
+        </div>
+      ))}
+    </div>
   )
 }
 
