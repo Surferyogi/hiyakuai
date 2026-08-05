@@ -186,14 +186,18 @@ function sweep_(mode, maxJobs, dryRun) {
   var c = config_();
   var started = Date.now();
   var props = PropertiesService.getScriptProperties();
-  var sinceMs = 0;
-  if (mode === 'daily') {
-    var wm = props.getProperty('WATERMARK_MS');
-    sinceMs = wm ? Number(wm) : 0;
-  }
+  // The watermark applies to BOTH modes. Backlog previously restarted from the
+  // oldest email every run, so with a 4.5 minute ceiling it would re-process
+  // the same first emails forever and never reach the newer LinkedIn and
+  // MyCareersFuture alerts. Now each run resumes where the last one stopped;
+  // run runBacklog repeatedly until it reports 0 messages collected.
+  var wm = props.getProperty('WATERMARK_MS');
+  var sinceMs = wm ? Number(wm) : 0;
 
   var emails = collectMessages_(sinceMs, 200);
-  Logger.log('Messages collected: ' + emails.length);
+  Logger.log('Messages collected: ' + emails.length +
+             (sinceMs ? ' (resuming after ' + new Date(sinceMs).toISOString() + ')'
+                      : ' (from the beginning)'));
   if (!emails.length) return { emails: 0, inserted: 0, parsed: 0 };
 
   var totals = { emails: 0, parsed: 0, inserted: 0, duplicate: 0, enriched: 0, ai: 0 };
@@ -414,6 +418,15 @@ function previewDigest() {
 function runDaily() {
   sweep_('daily', DAILY_MAX_JOBS, false);
   sendDigest(false);
+}
+
+/**
+ * Clears the resume point so the next backlog run starts from the oldest
+ * labelled message again. Does not delete any staged rows.
+ */
+function resetWatermark() {
+  PropertiesService.getScriptProperties().deleteProperty('WATERMARK_MS');
+  Logger.log('Watermark cleared. Next run starts from the oldest message.');
 }
 
 function installDailyTrigger() {

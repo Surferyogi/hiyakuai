@@ -140,11 +140,17 @@ const SENIOR_PATTERNS = [
   /\bglobal (head|director|lead)\b/i,
 ];
 
+// Junior markers OVERRIDE senior markers. A real C-suite title never contains
+// these words, whereas a senior word can appear as a department name:
+// "Associate/Analyst, Corporate Account Services, Group COO" matched \bcoo\b
+// and was wrongly promoted to "look".
 const JUNIOR_PATTERNS = [
   /\bintern(ship)?\b/i, /\btrainee\b/i, /\bapprentice\b/i, /\bgraduate\b/i,
   /\bjunior\b/i, /\bassistant\b/i, /\bexecutive assistant\b/i,
   /\bfresh\b/i, /\bentry.?level\b/i, /\bpart.?time\b/i,
   /\bcoordinator\b/i, /\bclerk\b/i, /\btechnician\b/i, /\bofficer\b/i,
+  /\bassociate\b/i, /\banalyst\b/i, /\brepresentative\b/i,
+  /\bconsultant\b/i, /\bexecutive,/i, /\bsupervisor\b/i,
 ];
 
 function triageRecord(
@@ -166,7 +172,7 @@ function triageRecord(
   const senior = SENIOR_PATTERNS.some((p) => p.test(title));
   const junior = JUNIOR_PATTERNS.some((p) => p.test(title));
 
-  if (junior && !senior) {
+  if (junior) {
     return { triage: "skip", reason: `title indicates junior level: ${title}` };
   }
   if (senior) {
