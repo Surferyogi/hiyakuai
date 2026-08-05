@@ -100,15 +100,22 @@ function htmlToTextWithLinks_(html) {
   if (!html) return '';
   var out = String(html);
   out = out.replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ');
+  // Links are parked behind a sentinel FIRST. Writing them as <url> and then
+  // running the generic tag stripper below deleted every one of them, because
+  // <https://...> matches /<[^>]+>/ . The sentinel survives tag stripping and
+  // is restored to <url> afterwards, before entity decoding so that &amp; in
+  // a tracking URL is decoded back to & .
   out = out.replace(/<a\b[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi,
     function (m, href, inner) {
       var label = inner.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-      if (!label) return ' <' + href + '> ';
-      return ' ' + label + ' <' + href + '> ';
+      var token = ' @@URL@@' + href + '@@ENDURL@@ ';
+      if (!label) return token;
+      return ' ' + label + token;
     });
   out = out.replace(/<br\s*\/?>/gi, '\n');
   out = out.replace(/<\/(p|div|li|tr|h[1-6]|table)>/gi, '\n');
   out = out.replace(/<[^>]+>/g, ' ');
+  out = out.replace(/@@URL@@([\s\S]*?)@@ENDURL@@/g, ' <$1> ');
   out = out.replace(/&nbsp;/gi, ' ')
            .replace(/&amp;/gi, '&')
            .replace(/&lt;/gi, '<')
