@@ -114,6 +114,16 @@ function makeDedupKey(company: string, title: string): string {
   return `${norm(company)}|${norm(title)}`;
 }
 
+// Restores the exact original URL for a token. The model never sees or emits
+// a URL, so nothing can be truncated or reconstructed. An unknown token
+// resolves to empty rather than to a guess.
+function resolveToken(v: string, map: Record<string, string>): string {
+  if (!v) return "";
+  if (/^https?:\/\//i.test(v)) return v;
+  const key = (v.match(/L\d+/i) || [""])[0].toUpperCase();
+  return key && map[key] ? map[key] : "";
+}
+
 function notStated(v: unknown): boolean {
   if (v === null || v === undefined) return true;
   const s = String(v).trim().toLowerCase();
@@ -251,7 +261,9 @@ ABSOLUTE RULES
 - If a field is not present, return the exact string "Not stated".
   Never substitute a plausible value.
 - Do not merge two listings. Do not invent listings. Do not drop listings.
-- Copy the job URL exactly as given. Never construct, shorten or repair a URL.
+- Links appear as short tokens like [[L7]]. Return the token EXACTLY as it
+  appears next to that listing, for example "L7". Never return a URL, never
+  invent a token, never reuse a token from a different listing.
 - Ignore everything that is not a job listing: headers, footers, unsubscribe
   links, promotional blocks, "see more jobs", profile prompts, adverts.
 
@@ -274,9 +286,11 @@ Each element:
   "alumni_count": number | null,
   "easy_apply": true | false | null,
   "posted_age_text": string,
-  "job_url": string,
+  "job_url_token": string,
   "raw_snippet": string
 }
+"job_url_token" is the token beside that listing, for example "L7", or
+"Not stated" if the listing has no token.
 "is_remote" is null unless the email states it.
 "alumni_count" is the number of your contacts or alumni at that company if the
 email shows one, otherwise null.
@@ -363,6 +377,13 @@ async function handleIngest(userId: string, body: Record<string, unknown>) {
       continue;
     }
 
+    const linkMap: Record<string, string> = {};
+    if (Array.isArray(e.links)) {
+      for (const l of e.links as { t: string; u: string }[]) {
+        if (l && l.t && l.u) linkMap[String(l.t).toUpperCase()] = String(l.u);
+      }
+    }
+
     let jobs: Record<string, unknown>[] = [];
     try {
       jobs = await extractJobs(text);
@@ -399,7 +420,7 @@ async function handleIngest(userId: string, body: Record<string, unknown>) {
         alumni_count: typeof j.alumni_count === "number" ? j.alumni_count : null,
         easy_apply: typeof j.easy_apply === "boolean" ? j.easy_apply : null,
         posted_age_text: clean(j.posted_age_text),
-        job_url: clean(j.job_url),
+        job_url: resolveToken(clean(j.job_url_token) || clean(j.job_url), linkMap),
         external_id: "",
         full_text: "",
         full_text_source: "none",

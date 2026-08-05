@@ -141,6 +141,25 @@ function htmlToTextWithLinks_(html) {
 }
 
 /**
+ * Replaces every inline <url> with a short token and returns the map.
+ * Glassdoor tracking URLs reach 1400 characters and LinkedIn's exceed 600.
+ * Echoing thirteen of them verbatim pushed a single extraction past the Edge
+ * Function's 150s limit. The model now handles tokens; the exact original URL
+ * is restored server-side from this map, so no URL is ever reconstructed.
+ */
+function tokenizeLinks_(text) {
+  var links = [];
+  var n = 0;
+  var out = String(text).replace(/<(https?:\/\/[^>]+)>/g, function (m, url) {
+    n++;
+    var token = 'L' + n;
+    links.push({ t: token, u: url });
+    return ' [[' + token + ']] ';
+  });
+  return { text: out, links: links };
+}
+
+/**
  * Collect messages from the configured label, newest last, optionally only
  * those newer than the stored watermark.
  */
@@ -186,12 +205,14 @@ function collectMessages_(sinceMs, hardLimit) {
   var out = [];
   for (var i = 0; i < take.length; i++) {
     var mm = take[i].msg;
+    var tok = tokenizeLinks_(htmlToTextWithLinks_(mm.getBody()));
     out.push({
       messageId: mm.getId(),
       subject: mm.getSubject(),
       date: new Date(take[i].ms).toISOString(),
       source: take[i].source,
-      text: htmlToTextWithLinks_(mm.getBody())
+      text: tok.text,
+      links: tok.links
     });
   }
   return out;
@@ -249,6 +270,8 @@ function sweep_(mode, maxJobs, dryRun) {
     if (dryRun && resp.preview) Logger.log(JSON.stringify(resp.preview, null, 2));
 
     for (var b = 0; b < batch.length; b++) {
+      Logger.log('  ' + batch[b].source + ' | text ' + batch[b].text.length +
+                 ' chars | ' + batch[b].links.length + ' links');
       var ms = new Date(batch[b].date).getTime();
       if (ms > newestMs) newestMs = ms;
     }
