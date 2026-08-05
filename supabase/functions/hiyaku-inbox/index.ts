@@ -1,4 +1,4 @@
-// hiyaku-inbox — Gmail job-alert ingestion for HiyakuAI
+// hiyaku-inbox — Gmail job-alert ingestion for HiyakuAI  v2 (2026-08-05)
 // Phase 1. Separate from hiyaku-generate, which is untouched and keeps verify_jwt on.
 //
 // Deployed with --no-verify-jwt. Access is controlled by a shared secret header.
@@ -16,12 +16,16 @@
 // Uses existing secret: ANTHROPIC_API_KEY
 // Auto-provided by Supabase: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
-const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-const INBOX_SECRET = Deno.env.get("HIYAKU_INBOX_SECRET") ?? "";
-const ANTHROPIC_KEY = Deno.env.get("ANTHROPIC_API_KEY") ?? "";
-const OWNER_ENV = Deno.env.get("HIYAKU_OWNER_USER_ID") ?? "";
-const MODEL = Deno.env.get("HIYAKU_INBOX_MODEL") ?? "claude-sonnet-4-6";
+// Environment is read lazily, per request, NOT at module scope. Reading at
+// module scope froze an empty ANTHROPIC_API_KEY into the isolate on cold start
+// and produced a 401 on every call. hiyaku-generate reads inside its handler,
+// which is why it was unaffected. Values are trimmed: a trailing newline in a
+// pasted secret is invisible and produces the same 401.
+const env = (k: string, fallback = "") => {
+  const v = Deno.env.get(k);
+  return v === undefined || v === null ? fallback : String(v).trim();
+};
+const MODEL_DEFAULT = "claude-sonnet-4-6";
 
 const SOURCES = ["linkedin", "glassdoor", "mycareersfuture"];
 
@@ -37,13 +41,14 @@ async function pg(
   path: string,
   init: RequestInit & { prefer?: string } = {},
 ): Promise<Response> {
+  const serviceKey = env("SUPABASE_SERVICE_ROLE_KEY");
   const headers: Record<string, string> = {
-    apikey: SERVICE_KEY,
-    Authorization: `Bearer ${SERVICE_KEY}`,
+    apikey: serviceKey,
+    Authorization: `Bearer ${serviceKey}`,
     "Content-Type": "application/json",
   };
   if (init.prefer) headers["Prefer"] = init.prefer;
-  return await fetch(`${SUPABASE_URL}/rest/v1/${path}`, { ...init, headers });
+  return await fetch(`${env("SUPABASE_URL")}/rest/v1/${path}`, { ...init, headers });
 }
 
 async function pgJson(path: string, init: RequestInit & { prefer?: string } = {}) {
@@ -56,7 +61,8 @@ async function pgJson(path: string, init: RequestInit & { prefer?: string } = {}
 // Single-user app. Prefer the explicit secret; otherwise fall back to the sole
 // row in hiyaku_profile. Refuse to guess if that is ambiguous.
 async function resolveUserId(): Promise<string> {
-  if (OWNER_ENV) return OWNER_ENV;
+  const ownerEnv = env("HIYAKU_OWNER_USER_ID");
+  if (ownerEnv) return ownerEnv;
   const rows = await pgJson("hiyaku_profile?select=user_id&limit=2");
   if (!Array.isArray(rows) || rows.length !== 1) {
     throw new Error(
@@ -251,15 +257,17 @@ email shows one, otherwise null.
 If the email contains no job listings, return [].`;
 
 async function extractJobs(emailText: string): Promise<Record<string, unknown>[]> {
+  const apiKey = env("ANTHROPIC_API_KEY");
+  if (!apiKey) throw new Error("ANTHROPIC_API_KEY is empty at request time");
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-api-key": ANTHROPIC_KEY,
+      "x-api-key": apiKey,
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
-      model: MODEL,
+      model: env("HIYAKU_INBOX_MODEL", MODEL_DEFAULT),
       max_tokens: 8000,
       system: EXTRACT_SYSTEM,
       messages: [{ role: "user", content: emailText.slice(0, 120000) }],
@@ -495,11 +503,22 @@ async function handleStatus(userId: string) {
     `hiyaku_inbox_jobs?user_id=eq.${userId}&select=id&state=eq.new&limit=1000`,
   );
   const last = Array.isArray(runs) && runs.length ? runs[0] : null;
+  // Diagnostics report presence and length only. No secret value is ever
+  // returned, logged or echoed.
+  const anthropicKey = env("ANTHROPIC_API_KEY");
   return json({
     ok: true,
     lastRun: last,
     watermark: last?.watermark ?? null,
     newJobs: Array.isArray(counts) ? counts.length : 0,
+    diagnostics: {
+      anthropicKeyPresent: anthropicKey.length > 0,
+      anthropicKeyLength: anthropicKey.length,
+      anthropicKeyPrefixOk: anthropicKey.startsWith("sk-ant-"),
+      model: env("HIYAKU_INBOX_MODEL", MODEL_DEFAULT),
+      serviceKeyPresent: env("SUPABASE_SERVICE_ROLE_KEY").length > 0,
+      supabaseUrlPresent: env("SUPABASE_URL").length > 0,
+    },
   });
 }
 
@@ -508,10 +527,11 @@ async function handleStatus(userId: string) {
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok");
 
-  if (!INBOX_SECRET) {
+  const inboxSecret = env("HIYAKU_INBOX_SECRET");
+  if (!inboxSecret) {
     return json({ ok: false, error: "HIYAKU_INBOX_SECRET not configured" }, 500);
   }
-  if (req.headers.get("x-hiyaku-secret") !== INBOX_SECRET) {
+  if ((req.headers.get("x-hiyaku-secret") ?? "").trim() !== inboxSecret) {
     return json({ ok: false, error: "unauthorized" }, 401);
   }
   if (req.method !== "POST") {
