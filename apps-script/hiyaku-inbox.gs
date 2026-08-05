@@ -25,7 +25,7 @@
  * ---------------------------------------------------------------------------
  */
 
-var BACKLOG_MAX_JOBS = 50;   // confirmed: 50 JOBS, not 50 emails
+var BACKLOG_MAX_JOBS = 200;   // confirmed: 50 JOBS, not 50 emails
 var DAILY_MAX_JOBS   = 60;
 var BATCH_SIZE       = 1;    // emails per POST. Was 3, which exceeded the
                              // Edge Function's 150s idle limit once links were
