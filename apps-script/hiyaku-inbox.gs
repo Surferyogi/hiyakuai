@@ -27,7 +27,9 @@
 
 var BACKLOG_MAX_JOBS = 50;   // confirmed: 50 JOBS, not 50 emails
 var DAILY_MAX_JOBS   = 60;
-var BATCH_SIZE       = 3;    // emails per POST; each email is one AI call
+var BATCH_SIZE       = 1;    // emails per POST. Was 3, which exceeded the
+                             // Edge Function's 150s idle limit once links were
+                             // restored and converted text grew 10x.
 var MAX_RUNTIME_MS   = 4.5 * 60 * 1000;
 
 // --------------------------------------------------------------- properties
@@ -122,6 +124,15 @@ function htmlToTextWithLinks_(html) {
            .replace(/&gt;/gi, '>')
            .replace(/&quot;/gi, '"')
            .replace(/&#39;/gi, "'");
+  // Invisible padding characters. Glassdoor and LinkedIn both open with
+  // hundreds of zero-width joiners used as preview-text spacers. They carry no
+  // meaning and cost tokens on every call.
+  out = out.replace(/[\u034F\u200B-\u200F\u2060\uFEFF\u00AD]/g, '');
+  // Navigation and housekeeping links. These are chrome, never job postings,
+  // and LinkedIn ships several 600-character tracking URLs of them per email.
+  out = out.replace(
+    /<https?:\/\/[^>]*(?:comm\/(?:feed|messaging|mynetwork|notifications|premium)|unsubscribe|manage[_-]?settings|privacy|help)[^>]*>/gi,
+    ' ');
   out = out.replace(/[ \t]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n');
   return out.trim();
 }

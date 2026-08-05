@@ -192,8 +192,14 @@ function triageRecord(
 // return an empty shell, so the API is the only way to resolve the full text.
 
 function mcfUuidFromUrl(url: string): string {
-  const m = url.match(/([0-9a-f]{32})(?:[?#].*)?$/i);
-  return m ? m[1] : "";
+  // MyCareersFuture links arrive wrapped in an AWS tracking redirect with the
+  // real URL percent-encoded inside, so the UUID is mid-string, not at the end.
+  // Decode where possible, then take the first 32-hex run. The wrapper's own
+  // identifiers are dash-separated and never produce a 32-character run.
+  let u = url;
+  try { u = decodeURIComponent(url); } catch (_e) { /* keep raw */ }
+  const m = u.match(/[0-9a-f]{32}/i);
+  return m ? m[0] : "";
 }
 
 async function enrichFromMcf(url: string) {
