@@ -1,546 +1,375 @@
-// hiyaku-inbox — Gmail job-alert ingestion for HiyakuAI
-// Phase 1. Separate from hiyaku-generate, which is untouched and keeps verify_jwt on.
-//
-// Deployed with --no-verify-jwt. Access is controlled by a shared secret header.
-// This function can ONLY write to hiyaku_inbox_jobs / hiyaku_inbox_runs.
-// It never writes to hiyaku_applications, hiyaku_profile, hiyaku_sections,
-// hiyaku_links or hiyaku_certificates.
-//
-// Actions:
-//   status  -> { watermark, lastRun }
-//   ingest  -> parse alert emails into staged job rows
-//   digest  -> return un-alerted "look" rows and stamp alerted_at
-//
-// Required secret: HIYAKU_INBOX_SECRET
-// Optional secrets: HIYAKU_OWNER_USER_ID, HIYAKU_INBOX_MODEL
-// Uses existing secret: ANTHROPIC_API_KEY
-// Auto-provided by Supabase: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+// HiyakuAI — hiyaku-generate Edge Function  v10 (2026-07-16)
+// Modes: 'generate' | 'generic_cv' | 'extract' (text and/or screenshots/PDF) | 'parse_cert' | 'assess'
+// JWT verification: ON. Secret: ANTHROPIC_API_KEY.
 
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
-const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-const INBOX_SECRET = Deno.env.get("HIYAKU_INBOX_SECRET") ?? "";
-const ANTHROPIC_KEY = Deno.env.get("ANTHROPIC_API_KEY") ?? "";
-const OWNER_ENV = Deno.env.get("HIYAKU_OWNER_USER_ID") ?? "";
-const MODEL = Deno.env.get("HIYAKU_INBOX_MODEL") ?? "claude-sonnet-4-6";
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
-const SOURCES = ["linkedin", "glassdoor", "mycareersfuture"];
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
 
-const JSON_HEADERS = { "Content-Type": "application/json" };
+const json = (obj: unknown, status = 200) =>
+  new Response(JSON.stringify(obj), { status, headers: { ...CORS, "Content-Type": "application/json" } });
 
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), { status, headers: JSON_HEADERS });
-}
-
-// ---------------------------------------------------------------- PostgREST
-
-async function pg(
-  path: string,
-  init: RequestInit & { prefer?: string } = {},
-): Promise<Response> {
-  const headers: Record<string, string> = {
-    apikey: SERVICE_KEY,
-    Authorization: `Bearer ${SERVICE_KEY}`,
-    "Content-Type": "application/json",
-  };
-  if (init.prefer) headers["Prefer"] = init.prefer;
-  return await fetch(`${SUPABASE_URL}/rest/v1/${path}`, { ...init, headers });
-}
-
-async function pgJson(path: string, init: RequestInit & { prefer?: string } = {}) {
-  const res = await pg(path, init);
-  const text = await res.text();
-  if (!res.ok) throw new Error(`db ${res.status}: ${text.slice(0, 400)}`);
-  return text ? JSON.parse(text) : null;
-}
-
-// Single-user app. Prefer the explicit secret; otherwise fall back to the sole
-// row in hiyaku_profile. Refuse to guess if that is ambiguous.
-async function resolveUserId(): Promise<string> {
-  if (OWNER_ENV) return OWNER_ENV;
-  const rows = await pgJson("hiyaku_profile?select=user_id&limit=2");
-  if (!Array.isArray(rows) || rows.length !== 1) {
-    throw new Error(
-      "cannot resolve owner user_id: set HIYAKU_OWNER_USER_ID secret",
-    );
-  }
-  return rows[0].user_id;
-}
-
-// ---------------------------------------------------------------- utilities
-
-function stripHtml(html: string): string {
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/(p|div|li|h[1-6]|tr)>/gi, "\n")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/[ \t]{2,}/g, " ")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-function norm(s: string): string {
-  return (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
-}
-
-function makeDedupKey(company: string, title: string): string {
-  return `${norm(company)}|${norm(title)}`;
-}
-
-function notStated(v: unknown): boolean {
-  if (v === null || v === undefined) return true;
-  const s = String(v).trim().toLowerCase();
-  return s === "" || s === "not stated" || s === "n/a" || s === "null";
-}
-
-function clean(v: unknown): string {
-  return notStated(v) ? "" : String(v).trim();
-}
-
-// ------------------------------------------------------------ rule triage
-//
-// Deliberately permissive. The expensive error for a C-suite search is the
-// false negative, so "skip" requires an unambiguous signal. Everything not
-// clearly senior and not clearly junior lands in "maybe".
-
-const SENIOR_PATTERNS = [
-  /\bchief\b/i, /\bceo\b/i, /\bcoo\b/i, /\bcto\b/i, /\bcfo\b/i,
-  /\bpresident\b/i, /\bmanaging director\b/i, /\bgeneral manager\b/i,
-  /\bcountry (manager|director|head|lead)\b/i,
-  /\bregional (director|head|lead|manager|vice president)\b/i,
-  /\bhead of\b/i, /\bvice president\b/i, /\bsvp\b/i, /\bevp\b/i, /\bvp\b/i,
-  /\bpartner\b/i, /\bboard member\b/i, /\bsite director\b/i,
-  /\bglobal (head|director|lead)\b/i,
-];
-
-const JUNIOR_PATTERNS = [
-  /\bintern(ship)?\b/i, /\btrainee\b/i, /\bapprentice\b/i, /\bgraduate\b/i,
-  /\bjunior\b/i, /\bassistant\b/i, /\bexecutive assistant\b/i,
-  /\bfresh\b/i, /\bentry.?level\b/i, /\bpart.?time\b/i,
-  /\bcoordinator\b/i, /\bclerk\b/i, /\btechnician\b/i, /\bofficer\b/i,
-];
-
-function triageRecord(
-  rec: Record<string, unknown>,
-  allowedLocations: string[],
-): { triage: string; reason: string } {
-  const title = String(rec.role_title || "");
-  const location = String(rec.location || "");
-  const reasons: string[] = [];
-
-  const locOk = allowedLocations.length === 0 ||
-    allowedLocations.some((l) => norm(location).includes(norm(l))) ||
-    /remote|global|worldwide|anywhere/i.test(location) ||
-    rec.is_remote === true;
-
-  const senior = SENIOR_PATTERNS.some((p) => p.test(title));
-  const junior = JUNIOR_PATTERNS.some((p) => p.test(title));
-
-  if (!locOk && location !== "") {
-    return { triage: "skip", reason: `location outside scope: ${location}` };
-  }
-  if (junior && !senior) {
-    return { triage: "skip", reason: `title indicates junior level: ${title}` };
-  }
-  if (senior) {
-    reasons.push("senior title pattern matched");
-    if (typeof rec.alumni_count === "number" && (rec.alumni_count as number) > 0) {
-      reasons.push(`${rec.alumni_count} alumni at company`);
-    }
-    if (rec.salary_basis === "posted" && !notStated(rec.salary_text)) {
-      reasons.push(`posted salary ${rec.salary_text}`);
-    }
-    return { triage: "look", reason: reasons.join("; ") };
-  }
-  return {
-    triage: "maybe",
-    reason: "title does not clearly indicate level from email alone",
-  };
-}
-
-// ------------------------------------------------------- MyCareersFuture API
-//
-// Verified public, unauthenticated. Landing pages are client-rendered and
-// return an empty shell, so the API is the only way to resolve the full text.
-
-function mcfUuidFromUrl(url: string): string {
-  const m = url.match(/([0-9a-f]{32})(?:[?#].*)?$/i);
-  return m ? m[1] : "";
-}
-
-async function enrichFromMcf(url: string) {
-  const uuid = mcfUuidFromUrl(url);
-  if (!uuid) return null;
-  try {
-    const res = await fetch(`https://api.mycareersfuture.gov.sg/v2/jobs/${uuid}`);
-    if (!res.ok) return null;
-    const j = await res.json();
-    const sal = j?.salary;
-    const salaryText = sal && sal.minimum && sal.maximum
-      ? `SGD ${sal.minimum}-${sal.maximum} ${sal?.type?.salaryType ?? ""}`.trim()
-      : "";
-    return {
-      external_id: uuid,
-      company: j?.postedCompany?.name ?? "",
-      role_title: j?.title ?? "",
-      full_text: stripHtml(j?.description ?? ""),
-      full_text_source: "mcf_api",
-      salary_text: salaryText,
-      salary_basis: salaryText ? "posted" : "not_stated",
-      job_url: j?.metadata?.jobDetailsUrl ?? url,
-      min_years: j?.minimumYearsExperience ?? null,
-      position_levels: (j?.positionLevels ?? []).map((p: { position: string }) =>
-        p.position
-      ),
-    };
-  } catch (_e) {
-    return null;
-  }
-}
-
-// ------------------------------------------------------------ AI extraction
-//
-// One call per email. Extraction only: it converts a digest into an array of
-// jobs and is forbidden from inferring anything not present in the text.
-
-const EXTRACT_SYSTEM = `You extract job listings from a job-alert email.
-
-ABSOLUTE RULES
-- Extract ONLY what is literally present in the email text. Never infer,
-  complete, expand or guess any field.
-- If a field is not present, return the exact string "Not stated".
-  Never substitute a plausible value.
-- Do not merge two listings. Do not invent listings. Do not drop listings.
-- Copy the job URL exactly as given. Never construct, shorten or repair a URL.
-- Ignore everything that is not a job listing: headers, footers, unsubscribe
-  links, promotional blocks, "see more jobs", profile prompts, adverts.
-
-SALARY
-- salary_text: copy verbatim, including currency and any qualifier.
-- salary_basis: "platform_estimate" if the email labels it an estimate
-  (for example "Glassdoor Est."), "posted" if presented as the employer's
-  figure, "not_stated" if absent.
-
-Return ONLY a JSON array. No prose, no markdown fences.
-Each element:
-{
-  "company": string,
-  "role_title": string,
-  "location": string,
-  "is_remote": true | false | null,
-  "salary_text": string,
-  "salary_basis": "posted" | "platform_estimate" | "not_stated",
-  "employer_rating": number | null,
-  "alumni_count": number | null,
-  "easy_apply": true | false | null,
-  "posted_age_text": string,
-  "job_url": string,
-  "raw_snippet": string
-}
-"is_remote" is null unless the email states it.
-"alumni_count" is the number of your contacts or alumni at that company if the
-email shows one, otherwise null.
-"raw_snippet" is the verbatim block of text this listing came from.
-If the email contains no job listings, return [].`;
-
-async function extractJobs(emailText: string): Promise<Record<string, unknown>[]> {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+// userContent may be a string OR an array of content blocks (for vision/PDF)
+async function callClaude(apiKey: string, model: string, system: string, userContent: any, maxTokens: number) {
+  const resp = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": ANTHROPIC_KEY,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      max_tokens: 8000,
-      system: EXTRACT_SYSTEM,
-      messages: [{ role: "user", content: emailText.slice(0, 120000) }],
-    }),
+    headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+    body: JSON.stringify({ model, max_tokens: maxTokens, system, messages: [{ role: "user", content: userContent }] }),
   });
-  if (!res.ok) {
-    throw new Error(`anthropic ${res.status}: ${(await res.text()).slice(0, 300)}`);
-  }
-  const data = await res.json();
-  const text = (data.content ?? [])
-    .filter((b: { type: string }) => b.type === "text")
-    .map((b: { text: string }) => b.text)
-    .join("\n")
-    .replace(/```json|```/g, "")
-    .trim();
+  const data = await resp.json();
+  return { ok: resp.ok, status: resp.status, data };
+}
+
+function parseModelJson(data: any) {
+  const text = (data.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n");
   try {
-    const parsed = JSON.parse(text);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (_e) {
-    return [];
+    return { parsed: JSON.parse(text.replace(/```json|```/g, "").trim()), raw: text };
+  } catch {
+    return { parsed: null, raw: text };
   }
 }
 
-// ------------------------------------------------------------------ ingest
+Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
 
-async function handleIngest(userId: string, body: Record<string, unknown>) {
-  const emails = Array.isArray(body.emails) ? body.emails : [];
-  const mode = body.mode === "backlog" ? "backlog" : "daily";
-  const maxJobs = Number.isFinite(body.maxJobs as number)
-    ? Number(body.maxJobs)
-    : 60;
-  const dryRun = body.dryRun === true;
-  const allowedLocations = Array.isArray(body.allowedLocations)
-    ? (body.allowedLocations as string[])
-    : [];
-  const enrichMcf = body.enrichMcf !== false;
+  try {
+    const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
+    if (!apiKey) return json({ error: "ANTHROPIC_API_KEY secret not set" }, 500);
 
-  const stats = {
-    emails_seen: emails.length,
-    jobs_parsed: 0,
-    jobs_inserted: 0,
-    jobs_duplicate: 0,
-    jobs_enriched: 0,
-    ai_calls: 0,
-  };
-  const errors: string[] = [];
-  const preview: Record<string, unknown>[] = [];
-  let watermark: string | null = null;
+    const body = await req.json();
+    const mode = body.mode || "generate";
+    const model = body.model || "claude-sonnet-4-6";
 
-  const seenKeys = new Set<string>();
-  const rows: Record<string, unknown>[] = [];
+    // ---------------- EXTRACT MODE ----------------
+    if (mode === "extract") {
+      const { rawPosting, files } = body;
+      const hasFiles = Array.isArray(files) && files.length > 0;
+      if (!rawPosting && !hasFiles) {
+        return json({ error: "Provide rawPosting text and/or files (screenshots/PDF) for extract mode" }, 400);
+      }
 
-  for (const raw of emails) {
-    const e = raw as Record<string, unknown>;
-    const source = String(e.source ?? "").toLowerCase();
-    if (!SOURCES.includes(source)) {
-      errors.push(`unknown source "${source}" on message ${e.messageId ?? "?"}`);
-      continue;
-    }
-    const emailDate = clean(e.date);
-    if (emailDate && (!watermark || emailDate > watermark)) watermark = emailDate;
+      const IMG = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+      const blocks: any[] = [];
 
-    const text = clean(e.text) || stripHtml(clean(e.html));
-    if (!text) {
-      errors.push(`empty body on message ${e.messageId ?? "?"}`);
-      continue;
-    }
-
-    let jobs: Record<string, unknown>[] = [];
-    try {
-      jobs = await extractJobs(text);
-      stats.ai_calls += 1;
-    } catch (err) {
-      errors.push(`extract failed on ${e.messageId ?? "?"}: ${String(err)}`);
-      continue;
-    }
-
-    for (const j of jobs) {
-      if (rows.length >= maxJobs) break;
-      stats.jobs_parsed += 1;
-
-      const rec: Record<string, unknown> = {
-        user_id: userId,
-        source,
-        email_message_id: clean(e.messageId),
-        email_subject: clean(e.subject),
-        email_date: emailDate || null,
-        raw_snippet: clean(j.raw_snippet),
-        company: clean(j.company),
-        role_title: clean(j.role_title),
-        location: clean(j.location),
-        is_remote: typeof j.is_remote === "boolean" ? j.is_remote : null,
-        salary_text: clean(j.salary_text),
-        salary_basis: ["posted", "platform_estimate", "not_stated"].includes(
-            String(j.salary_basis),
-          )
-          ? String(j.salary_basis)
-          : "not_stated",
-        employer_rating: typeof j.employer_rating === "number"
-          ? j.employer_rating
-          : null,
-        alumni_count: typeof j.alumni_count === "number" ? j.alumni_count : null,
-        easy_apply: typeof j.easy_apply === "boolean" ? j.easy_apply : null,
-        posted_age_text: clean(j.posted_age_text),
-        job_url: clean(j.job_url),
-        external_id: "",
-        full_text: "",
-        full_text_source: "none",
-        triage_basis: "email_snippet",
-        triage_by: "rule",
-      };
-
-      if (!rec.company && !rec.role_title) continue;
-
-      if (
-        enrichMcf && source === "mycareersfuture" &&
-        String(rec.job_url).includes("mycareersfuture")
-      ) {
-        const enriched = await enrichFromMcf(String(rec.job_url));
-        if (enriched) {
-          rec.external_id = enriched.external_id;
-          rec.company = enriched.company || rec.company;
-          rec.role_title = enriched.role_title || rec.role_title;
-          rec.full_text = enriched.full_text;
-          rec.full_text_source = enriched.full_text_source;
-          rec.job_url = enriched.job_url;
-          if (enriched.salary_text) {
-            rec.salary_text = enriched.salary_text;
-            rec.salary_basis = enriched.salary_basis;
+      if (hasFiles) {
+        if (files.length > 8) return json({ error: "Please upload at most 8 files at once." }, 400);
+        for (const f of files) {
+          if (!f?.base64 || !f?.mimeType) return json({ error: "Each file needs base64 and mimeType" }, 400);
+          if (IMG.includes(f.mimeType)) {
+            blocks.push({ type: "image", source: { type: "base64", media_type: f.mimeType, data: f.base64 } });
+          } else if (f.mimeType === "application/pdf") {
+            blocks.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: f.base64 } });
+          } else {
+            return json({ error: `Unsupported file type: ${f.mimeType}. Use PNG, JPEG, GIF, WebP or PDF.` }, 400);
           }
-          rec.triage_basis = "full_text";
-          stats.jobs_enriched += 1;
         }
       }
 
-      const t = triageRecord(rec, allowedLocations);
-      rec.triage = t.triage;
-      rec.triage_reason = t.reason;
+      const system = `You extract structured fields from a job posting. The posting may be supplied as pasted text, as one or more screenshots or PDF pages, or both.
+STRICT RULES:
+- Use ONLY information literally present in the supplied text and files. NEVER infer, guess, or invent.
+- If several images are given, treat them as consecutive parts of ONE posting, in the order supplied.
+- For any field not present, use exactly the string "Not stated".
+- Keep the candidate-facing lists (qualifications, expectations) as concise bullet lines separated by newlines, preserving the posting's meaning.
+- salaryRange: quote the posting's own figures and currency verbatim if present, else "Not stated".
+- postingText: transcribe the posting's full readable text faithfully, preserving its wording and structure. Do not summarise, add, or omit content. If the images are unreadable, use "Not stated".
+- Respond ONLY with valid JSON, no markdown fences, exactly this shape:
+{"company":"","roleTitle":"","location":"","qualifications":"","expectations":"","howToApply":"","salaryRange":"","postingText":""}`;
 
-      const key = makeDedupKey(String(rec.company), String(rec.role_title));
-      rec.dedup_key = key;
-      if (seenKeys.has(key)) {
-        stats.jobs_duplicate += 1;
-        continue;
+      const instruction = hasFiles
+        ? `The attached ${blocks.length} file(s) contain a job posting.${rawPosting ? " Additional pasted text follows." : ""}${rawPosting ? "\n\nPASTED TEXT:\n" + rawPosting : ""}\n\nExtract now. JSON only.`
+        : `JOB POSTING TEXT:\n${rawPosting}\n\nExtract now. JSON only.`;
+
+      const content: any = hasFiles ? [...blocks, { type: "text", text: instruction }] : instruction;
+
+      const r = await callClaude(apiKey, model, system, content, 4000);
+      if (!r.ok) return json({ error: r.data?.error?.message || "Anthropic API error", raw: r.data }, r.status);
+      const { parsed, raw } = parseModelJson(r.data);
+      if (!parsed) return json({ error: "Model did not return clean JSON", raw }, 502);
+      return json(parsed);
+    }
+
+    if (mode === "parse_cert") {
+      const { fileBase64, mimeType } = body;
+      if (!fileBase64 || !mimeType) return json({ error: "fileBase64 and mimeType are required" }, 400);
+
+      const IMG = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+      let block: any;
+      if (IMG.includes(mimeType)) {
+        block = { type: "image", source: { type: "base64", media_type: mimeType, data: fileBase64 } };
+      } else if (mimeType === "application/pdf") {
+        block = { type: "document", source: { type: "base64", media_type: "application/pdf", data: fileBase64 } };
+      } else {
+        return json({ error: `Unsupported file type for parsing: ${mimeType}. Use PDF, JPEG, PNG, GIF or WebP.` }, 400);
       }
-      seenKeys.add(key);
-      rows.push(rec);
-      if (dryRun) preview.push(rec);
+
+      const system = `You extract factual details from a certificate, licence, diploma or qualification document.
+STRICT RULES:
+- Report ONLY what is visibly present in the document. NEVER infer or invent.
+- Omit any field that is not shown; do not write placeholders.
+- If the file is unreadable or is not a credential, respond exactly: "Unable to read a credential from this file."
+- Output concise plain-text lines, only for fields present: Credential / title; Issuing organisation; Recipient name; Date issued; Expiry / valid-until; Credential ID / number; Level or grade; Distinctions or notes.`;
+
+      const content = [block, { type: "text", text: "Extract the credential details now, following the rules." }];
+      const r = await callClaude(apiKey, model, system, content, 700);
+      if (!r.ok) return json({ error: r.data?.error?.message || "Anthropic API error", raw: r.data }, r.status);
+      const text = (r.data.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n").trim();
+      return json({ parsedText: text });
     }
-    if (rows.length >= maxJobs) break;
-  }
 
-  if (!dryRun && rows.length > 0) {
-    const inserted = await pgJson(
-      "hiyaku_inbox_jobs?on_conflict=user_id,dedup_key",
-      {
-        method: "POST",
-        body: JSON.stringify(rows),
-        prefer: "resolution=ignore-duplicates,return=representation",
-      },
-    );
-    stats.jobs_inserted = Array.isArray(inserted) ? inserted.length : 0;
-    stats.jobs_duplicate += rows.length - stats.jobs_inserted;
-  }
+    // ---------------- ASSESS MODE (suitability: profile vs job) ----------------
+    if (mode === "assess") {
+      const { jobDescription, referenceCv, headline, about, links, certificates, extraNotes, sections } = body;
 
-  if (!dryRun) {
-    await pg("hiyaku_inbox_runs", {
-      method: "POST",
-      body: JSON.stringify([{
-        user_id: userId,
-        mode,
-        finished_at: new Date().toISOString(),
-        emails_seen: stats.emails_seen,
-        jobs_parsed: stats.jobs_parsed,
-        jobs_inserted: stats.jobs_inserted,
-        jobs_duplicate: stats.jobs_duplicate,
-        jobs_enriched: stats.jobs_enriched,
-        ai_calls: stats.ai_calls,
-        watermark,
-        error: errors.join(" | ").slice(0, 2000),
-      }]),
-      prefer: "return=minimal",
-    });
-  }
+      if (!jobDescription || !String(jobDescription).trim()) {
+        return json({ error: "jobDescription is required for assess mode" }, 400);
+      }
+      const corpus = [
+        referenceCv, headline, about, extraNotes,
+        ...(sections || []).map((s: any) => s?.content),
+        ...(certificates || []).map((c: any) => `${c.name || ""} ${c.note || ""} ${c.parsed_text || ""}`),
+      ].filter((x) => x && String(x).trim()).join(" ");
+      if (!corpus.trim()) {
+        return json({ error: "Your Library is empty - add a reference CV or fill some profile sections first." }, 400);
+      }
 
-  return json({
-    ok: true,
-    dryRun,
-    mode,
-    maxJobs,
-    watermark,
-    ...stats,
-    errors,
-    preview: dryRun ? preview : undefined,
-  });
-}
+      const system = `You are a rigorous, impartial executive-search assessor. You judge how suitable a candidate is for a specific job posting, comparing the candidate's Library (their verified profile) against the job's stated requirements.
 
-// ------------------------------------------------------------------ digest
+TRUTH RULES (ABSOLUTE):
+- The candidate's Library below is the ONLY evidence about the candidate. The job posting is the ONLY evidence about the role. NEVER infer, guess or invent facts on either side.
+- Every strength you list MUST cite concrete evidence from the Library (role, achievement, credential). If the Library has no evidence for a job requirement, that requirement is a gap - say so plainly.
+- If the posting does not state a requirement (e.g. no seniority or location given), do not treat it as met or unmet; simply do not score it.
+- Be honest and critical. An inflated score misleads the candidate into wasted applications. A "stretch" or "not_recommended" verdict is a valid, useful outcome.
 
-async function handleDigest(userId: string, body: Record<string, unknown>) {
-  const includeMaybe = body.includeMaybe === true;
-  const dryRun = body.dryRun === true;
-  const buckets = includeMaybe ? "(look,maybe)" : "(look)";
+SCORING:
+- score: integer 0-100 reflecting how much of the job's STATED requirements are evidenced in the Library, weighted by importance (must-have qualifications weigh more than nice-to-haves).
+- verdict mapping (apply consistently): 80-100 "strong_fit"; 60-79 "good_fit"; 40-59 "stretch"; 0-39 "not_recommended".
 
-  const rows = await pgJson(
-    `hiyaku_inbox_jobs?user_id=eq.${userId}&alerted_at=is.null` +
-      `&state=eq.new&triage=in.${buckets}` +
-      `&select=id,source,company,role_title,location,is_remote,salary_text,` +
-      `salary_basis,employer_rating,alumni_count,posted_age_text,job_url,` +
-      `triage,triage_reason,triage_basis,full_text_source` +
-      `&order=triage.asc,created_at.desc&limit=100`,
-  );
+OUTPUT:
+- summary: 2-4 plain sentences: should the candidate apply, and why. Mention seniority/level match and domain match explicitly.
+- strengths: 3-8 bullets, each "requirement -> evidence" (job requirement, then the specific Library evidence meeting it).
+- gaps: 0-8 bullets, each a stated job requirement with no (or weak) Library evidence, and how serious it is. If none, return an empty array.
+- emphasis: 2-5 bullets: what to foreground in the CV/letter IF applying (only Library-evidenced points).
+- Plain ASCII punctuation only. No em dashes, bullets characters or decorative symbols.
+- Respond ONLY with valid JSON, no markdown fences, exactly this shape:
+{"verdict":"strong_fit|good_fit|stretch|not_recommended","score":0,"summary":"","strengths":[""],"gaps":[""],"emphasis":[""]}`;
 
-  const list = Array.isArray(rows) ? rows : [];
-  if (!dryRun && list.length > 0) {
-    const ids = list.map((r: { id: string }) => r.id).join(",");
-    await pg(`hiyaku_inbox_jobs?id=in.(${ids})`, {
-      method: "PATCH",
-      body: JSON.stringify({ alerted_at: new Date().toISOString() }),
-      prefer: "return=minimal",
-    });
-  }
-  return json({ ok: true, dryRun, count: list.length, jobs: list });
-}
+      const sectionBlock = (sections || [])
+        .filter((s: any) => s && s.content && String(s.content).trim())
+        .map((s: any) => `[${s.title}]\n${s.content}`)
+        .join("\n\n") || "(none)";
 
-// ------------------------------------------------------------------ status
+      const userMsg = `The materials below are the candidate's complete profile and the ONLY source of truth about the candidate.
 
-async function handleStatus(userId: string) {
-  const runs = await pgJson(
-    `hiyaku_inbox_runs?user_id=eq.${userId}&order=started_at.desc&limit=1`,
-  );
-  const counts = await pgJson(
-    `hiyaku_inbox_jobs?user_id=eq.${userId}&select=id&state=eq.new&limit=1000`,
-  );
-  const last = Array.isArray(runs) && runs.length ? runs[0] : null;
-  return json({
-    ok: true,
-    lastRun: last,
-    watermark: last?.watermark ?? null,
-    newJobs: Array.isArray(counts) ? counts.length : 0,
-  });
-}
+=== REFERENCE CV ===
+${referenceCv || "(none)"}
 
-// -------------------------------------------------------------------- entry
+=== LINKEDIN HEADLINE ===
+${headline || "(not provided)"}
 
-Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") return new Response("ok");
+=== LINKEDIN ABOUT ===
+${about || "(not provided)"}
 
-  if (!INBOX_SECRET) {
-    return json({ ok: false, error: "HIYAKU_INBOX_SECRET not configured" }, 500);
-  }
-  if (req.headers.get("x-hiyaku-secret") !== INBOX_SECRET) {
-    return json({ ok: false, error: "unauthorized" }, 401);
-  }
-  if (req.method !== "POST") {
-    return json({ ok: false, error: "POST only" }, 405);
-  }
+=== LINKEDIN PROFILE SECTIONS ===
+${sectionBlock}
 
-  let body: Record<string, unknown>;
-  try {
-    body = await req.json();
-  } catch (_e) {
-    return json({ ok: false, error: "invalid JSON body" }, 400);
-  }
+=== ONLINE SOURCES ===
+${(links || []).map((l: any) => `- ${l.label}: ${l.url} [${l.category}]`).join("\n") || "(none)"}
 
-  try {
-    const userId = await resolveUserId();
-    switch (String(body.action ?? "")) {
-      case "status":
-        return await handleStatus(userId);
-      case "ingest":
-        return await handleIngest(userId, body);
-      case "digest":
-        return await handleDigest(userId, body);
-      default:
-        return json(
-          { ok: false, error: "action must be status, ingest or digest" },
-          400,
-        );
+=== CERTIFICATES / QUALIFICATIONS (name, note, parsed contents) ===
+${(certificates || []).map((c: any) => `- ${c.name}${c.note ? " - " + c.note : ""}${c.parsed_text ? "\n  Parsed details: " + String(c.parsed_text).replace(/\n/g, "\n  ") : ""}`).join("\n") || "(none)"}
+
+=== EXTRA NOTES FROM CANDIDATE ===
+${extraNotes || "(none)"}
+
+=== TARGET JOB POSTING (the ONLY source of truth about the role) ===
+${jobDescription}
+
+Assess the candidate's suitability for this job now. JSON only.`;
+
+      const r = await callClaude(apiKey, model, system, userMsg, 2000);
+      if (!r.ok) return json({ error: r.data?.error?.message || "Anthropic API error", raw: r.data }, r.status);
+      const { parsed, raw } = parseModelJson(r.data);
+      if (!parsed || !parsed.verdict) return json({ error: "Model did not return clean JSON", raw }, 502);
+      return json(parsed);
     }
-  } catch (err) {
-    return json({ ok: false, error: String(err) }, 500);
+
+    // ---------------- GENERATE MODE ----------------
+    if (mode === "generic_cv") {
+      const { referenceCv, headline, about, links, certificates, extraNotes, sections } = body;
+
+      const corpus = [
+        referenceCv, headline, about, extraNotes,
+        ...(sections || []).map((x: any) => x?.content),
+        ...(certificates || []).map((c: any) => `${c.name || ""} ${c.note || ""} ${c.parsed_text || ""}`),
+      ].filter((x) => x && String(x).trim()).join(" ");
+      if (!corpus.trim()) return json({ error: "Your Library is empty - add a reference CV or fill some profile sections first." }, 400);
+
+      const system = `You are an elite executive-career writer. You produce a candidate's definitive GENERIC master CV: not tailored to any single job, but a complete, polished, role-agnostic executive CV suitable for sending to search firms or attaching to speculative approaches.
+
+TRUTH RULES:
+- The candidate's Library below is the ONLY source of truth. Use ONLY facts present there. NEVER invent numbers, employers, dates, degrees, awards, recommendations or claims.
+- Do not target any particular employer or vacancy. Do not add an objective aimed at a specific company.
+- Include every substantive role, board position, qualification and language evidenced in the Library, but compress older roles to a single line each. Achievement-led, never duty-led.
+
+FORMATTING RULES (ATS-safe, plain and professional):
+- Use ONLY plain ASCII punctuation. NEVER use em dashes, en dashes, middots, bullet characters, curly/smart quotes, arrows, or any decorative symbol.
+- Bullets: begin each with a plain hyphen and a space ("- "). No nested bullets.
+- Section headings: standard names only (Professional Summary, Core Competencies, Professional Experience, Board and Governance, Education, Certifications, Languages).
+- Write "and" instead of "&". Dates as "Month YYYY" or "YYYY", plain hyphen for ranges.
+- One achievement per bullet, roughly 10-25 words. Single column, no tables, no text boxes.
+- Contact details as plain text lines at the top.
+
+STRUCTURE:
+- Start with the candidate's name, then contact details, then a short positioning line if one is evidenced.
+- Then: Professional Summary; Core Competencies; Professional Experience (reverse chronological, achievements as bullets); Board and Governance (if evidenced); Education and Certifications; Languages (if evidenced).
+LENGTH DISCIPLINE (STRICT - the CV must fit exactly two A4 pages):
+- Total body content: 700-850 words. Never exceed 850 words.
+- Professional Summary: 45-70 words, 3-4 lines, no bullets.
+- Core Competencies: ONE compact block, 12-16 items separated by commas. Not a bulleted list.
+- Professional Experience: reverse chronological.
+  - Two most recent roles: 3-4 bullets each.
+  - Next two roles: 2-3 bullets each.
+  - All older roles: exactly ONE line each (title, employer, location, dates, single outcome clause).
+- Each bullet: ONE line of 12-22 words. Never wrap past two lines. No sub-bullets.
+- Board and Governance: one line per seat.
+- Education, Certifications, Languages: one line each, comma-separated where possible. No bullets.
+- Omit any line that does not add distinct evidence. Do not repeat an achievement in both the summary and a bullet.
+- No filler: no "References available on request", no soft-skill claims, no duty descriptions.
+- Respond ONLY with valid JSON, no markdown fences, exactly this shape:
+{"cv":"<markdown>"}`;
+
+      const sectionBlock = (sections || [])
+        .filter((x: any) => x && x.content && String(x.content).trim())
+        .map((x: any) => `[${x.title}]\n${x.content}`)
+        .join("\n\n") || "(none)";
+
+      const userMsg = `The materials below are the candidate's complete profile and the ONLY source of truth.
+
+=== REFERENCE CV ===
+${referenceCv || "(none)"}
+
+=== LINKEDIN HEADLINE ===
+${headline || "(not provided)"}
+
+=== LINKEDIN ABOUT ===
+${about || "(not provided)"}
+
+=== LINKEDIN PROFILE SECTIONS ===
+${sectionBlock}
+
+=== ONLINE SOURCES ===
+${(links || []).map((l: any) => `- ${l.label}: ${l.url} [${l.category}]`).join("\n") || "(none)"}
+
+=== CERTIFICATES / QUALIFICATIONS (name, note, parsed contents) ===
+${(certificates || []).map((c: any) => `- ${c.name}${c.note ? " - " + c.note : ""}${c.parsed_text ? "\n  Parsed details: " + String(c.parsed_text).replace(/\n/g, "\n  ") : ""}`).join("\n") || "(none)"}
+
+=== EXTRA NOTES FROM CANDIDATE ===
+${extraNotes || "(none)"}
+
+Produce the generic master CV now. JSON only.`;
+
+      const r = await callClaude(apiKey, model, system, userMsg, 4000);
+      if (!r.ok) return json({ error: r.data?.error?.message || "Anthropic API error", raw: r.data }, r.status);
+      const { parsed, raw } = parseModelJson(r.data);
+      if (!parsed || !parsed.cv) return json({ cv: raw });
+      return json(parsed);
+    }
+
+    const { jobDescription, referenceCv, headline, about, links, certificates, extraNotes, sections } = body;
+
+    const corpus = [
+      referenceCv, headline, about, extraNotes,
+      ...(sections || []).map((s: any) => s?.content),
+      ...(certificates || []).map((c: any) => `${c.name || ""} ${c.note || ""} ${c.parsed_text || ""}`),
+      ...(links || []).map((l: any) => l?.label),
+    ].filter((x) => x && String(x).trim()).join(" ");
+
+    if (!jobDescription) return json({ error: "jobDescription is required" }, 400);
+    if (!corpus.trim()) return json({ error: "Your Library is empty — add a reference CV or fill some profile sections first." }, 400);
+
+    const system = `You are an elite executive-career writer. You tailor CVs and cover letters for a senior C-suite candidate.
+
+TRUTH RULES:
+- The candidate's Library below is the ONLY source of truth: reference CV, LinkedIn sections, links, certificates and their parsed details, and notes. Use ONLY facts present there. NEVER invent numbers, employers, dates, degrees, awards, recommendations or claims.
+- If the job asks for something not evidenced in the materials, do not fabricate it; optionally note it in fitNotes.
+- Mirror the job description's genuine keywords where the candidate's real experience supports them (ATS-aware).
+
+FORMATTING RULES (ATS-safe, plain and professional):
+- Use ONLY plain ASCII punctuation. NEVER use em dashes, en dashes, middots, bullets characters, curly/smart quotes, arrows, or any decorative symbol.
+- Replace: em dash or en dash -> a plain hyphen "-" with spaces, or restructure the sentence. Curly quotes -> straight quotes. Middot separators -> commas.
+- Bullets: begin each with a plain hyphen and a space ("- "). No nested bullets.
+- Section headings: use standard, conventional names only (Professional Summary, Core Competencies, Professional Experience, Board and Governance, Education, Certifications). Do not invent creative headings.
+- Write "and" instead of "&". Write "percent" instead of "%" in prose.
+- Dates: a consistent "Month YYYY" or "YYYY" format, with a plain hyphen for ranges (e.g. "January 2018 - March 2023").
+- Keep one achievement per bullet, roughly 10-25 words. Single column, no tables, no text boxes, no graphics.
+- Contact details in the body text at the top, never as a header/footer construct.
+
+STRUCTURE:
+- CV: concise, achievement-led, markdown headings.
+
+LENGTH DISCIPLINE (STRICT - the CV must fit exactly two A4 pages):
+- Total body content: 700-850 words. Never exceed 850 words.
+- Professional Summary: 45-70 words, 3-4 lines, no bullets.
+- Core Competencies: ONE compact block, 12-16 items separated by commas. Not a bulleted list.
+- Professional Experience: reverse chronological.
+  - Two most recent roles: 3-4 bullets each.
+  - Next two roles: 2-3 bullets each.
+  - All older roles: exactly ONE line each (title, employer, location, dates, single outcome clause).
+- Each bullet: ONE line of 12-22 words. Never wrap past two lines. No sub-bullets.
+- Board and Governance: one line per seat.
+- Education, Certifications, Languages: one line each, comma-separated where possible. No bullets.
+- Omit any line that does not add distinct evidence. Do not repeat an achievement in both the summary and a bullet.
+- No filler: no "References available on request", no soft-skill claims, no duty descriptions.
+- Cover letter: max 350 words, specific to this company and role, confident and warm, no cliches. Plain paragraphs.
+- Respond ONLY with valid JSON, no markdown fences, in exactly this shape:
+{"cv":"<markdown>","coverLetter":"<markdown>","fitNotes":"<short bullet list: strengths for this role, gaps/risks, suggested emphasis>"}`;
+
+    const sectionBlock = (sections || [])
+      .filter((s: any) => s && s.content && String(s.content).trim())
+      .map((s: any) => `[${s.title}]\n${s.content}`)
+      .join("\n\n") || "(none)";
+
+    const userMsg = `The materials below are the candidate's complete profile and the ONLY source of truth.
+
+=== REFERENCE CV ===
+${referenceCv || "(none)"}
+
+=== LINKEDIN HEADLINE ===
+${headline || "(not provided)"}
+
+=== LINKEDIN ABOUT ===
+${about || "(not provided)"}
+
+=== LINKEDIN PROFILE SECTIONS (Experience, Education, Skills, Recommendations, Publications, Honors & Awards, Languages, Interests) ===
+${sectionBlock}
+
+=== ONLINE SOURCES ===
+${(links || []).map((l: any) => `- ${l.label}: ${l.url} [${l.category}]`).join("\n") || "(none)"}
+
+=== CERTIFICATES / QUALIFICATIONS (name, note, and parsed contents) ===
+${(certificates || []).map((c: any) => `- ${c.name}${c.note ? " — " + c.note : ""}${c.parsed_text ? "\n  Parsed details: " + String(c.parsed_text).replace(/\n/g, "\n  ") : ""}`).join("\n") || "(none)"}
+
+=== EXTRA NOTES FROM CANDIDATE ===
+${extraNotes || "(none)"}
+
+=== TARGET JOB DESCRIPTION ===
+${jobDescription}
+
+Produce the tailored CV, cover letter and fit notes now. JSON only.`;
+
+    const r = await callClaude(apiKey, model, system, userMsg, 4000);
+    if (!r.ok) return json({ error: r.data?.error?.message || "Anthropic API error", raw: r.data }, r.status);
+    const { parsed, raw } = parseModelJson(r.data);
+    if (!parsed) {
+      return json({ cv: raw, coverLetter: "", fitNotes: "Model did not return clean JSON — raw output placed in CV field. Regenerate if needed." });
+    }
+    return json(parsed);
+  } catch (e) {
+    return json({ error: String(e) }, 500);
   }
 });
