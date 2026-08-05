@@ -289,6 +289,87 @@ function sendDigest(dryRun) {
   return resp.count;
 }
 
+// ------------------------------------------------------------- diagnostics
+
+/**
+ * Dumps the converted text of the newest labelled message per source so the
+ * anchor-to-text conversion can be inspected directly. Makes no API call,
+ * writes nothing, costs nothing. Use this to see whether job links survive
+ * htmlToTextWithLinks_ before changing the parser.
+ */
+function previewEmailText() {
+  var c = config_();
+  var label = GmailApp.getUserLabelByName(c.label);
+  if (!label) throw new Error('Gmail label not found: ' + c.label);
+
+  var wanted = { linkedin: false, glassdoor: false, mycareersfuture: false };
+  var start = 0;
+  var page = 50;
+  var found = 0;
+
+  while (found < 3 && start < 400) {
+    var threads = label.getThreads(start, page);
+    if (!threads.length) break;
+    for (var t = threads.length - 1; t >= 0; t--) {
+      var msgs = threads[t].getMessages();
+      for (var m = msgs.length - 1; m >= 0; m--) {
+        var msg = msgs[m];
+        var src = detectSource_(msg.getFrom());
+        if (!src || wanted[src]) continue;
+        wanted[src] = true;
+        found++;
+        var text = htmlToTextWithLinks_(msg.getBody());
+        var hrefCount = (text.match(/<https?:\/\//g) || []).length;
+        Logger.log('================ SOURCE: ' + src + ' ================');
+        Logger.log('From: ' + msg.getFrom());
+        Logger.log('Subject: ' + msg.getSubject());
+        Logger.log('Raw HTML length: ' + msg.getBody().length);
+        Logger.log('Converted text length: ' + text.length);
+        Logger.log('Inline links found in converted text: ' + hrefCount);
+        Logger.log('---------------- first 3000 chars ----------------');
+        Logger.log(text.slice(0, 3000));
+        Logger.log('');
+        if (found >= 3) break;
+      }
+      if (found >= 3) break;
+    }
+    start += page;
+  }
+  Logger.log('Sources sampled: ' + JSON.stringify(wanted));
+  return wanted;
+}
+
+/**
+ * Counts the raw anchor tags in one message before any conversion, so a
+ * missing link can be traced to the email itself rather than the converter.
+ */
+function countRawAnchors() {
+  var c = config_();
+  var label = GmailApp.getUserLabelByName(c.label);
+  if (!label) throw new Error('Gmail label not found: ' + c.label);
+  var threads = label.getThreads(0, 10);
+  for (var t = 0; t < threads.length; t++) {
+    var msgs = threads[t].getMessages();
+    for (var m = 0; m < msgs.length; m++) {
+      var msg = msgs[m];
+      var src = detectSource_(msg.getFrom());
+      if (!src) continue;
+      var html = msg.getBody();
+      var anchors = html.match(/<a\b[^>]*>/gi) || [];
+      var withHref = html.match(/<a\b[^>]*href\s*=\s*["'][^"']+["'][^>]*>/gi) || [];
+      Logger.log(src + ' | anchors: ' + anchors.length +
+                 ' | anchors with href: ' + withHref.length);
+      if (anchors.length && !withHref.length) {
+        Logger.log('SAMPLE ANCHOR: ' + anchors[0].slice(0, 300));
+      } else if (withHref.length) {
+        Logger.log('SAMPLE ANCHOR: ' + withHref[0].slice(0, 300));
+      }
+      return;
+    }
+  }
+  Logger.log('No labelled message found.');
+}
+
 // ----------------------------------------------------------- entry points
 
 function testConnection() {

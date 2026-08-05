@@ -155,22 +155,23 @@ function triageRecord(
   const location = String(rec.location || "");
   const reasons: string[] = [];
 
-  const locOk = allowedLocations.length === 0 ||
-    allowedLocations.some((l) => norm(location).includes(norm(l))) ||
-    /remote|global|worldwide|anywhere/i.test(location) ||
-    rec.is_remote === true;
+  // Location NEVER causes a skip.
+  // Glassdoor reports Singapore districts rather than the country: Tuas,
+  // Tampines New Town, Old Kallang Airport Estate, North-East. Matching those
+  // against a country name binned 50 out of 50 valid roles. Location is now a
+  // positive signal only; it can add to the reason, never remove a record.
+  const locMatch = allowedLocations.length > 0 &&
+    allowedLocations.some((l) => norm(location).includes(norm(l)));
 
   const senior = SENIOR_PATTERNS.some((p) => p.test(title));
   const junior = JUNIOR_PATTERNS.some((p) => p.test(title));
 
-  if (!locOk && location !== "") {
-    return { triage: "skip", reason: `location outside scope: ${location}` };
-  }
   if (junior && !senior) {
     return { triage: "skip", reason: `title indicates junior level: ${title}` };
   }
   if (senior) {
     reasons.push("senior title pattern matched");
+    if (locMatch) reasons.push(`location matched: ${location}`);
     if (typeof rec.alumni_count === "number" && (rec.alumni_count as number) > 0) {
       reasons.push(`${rec.alumni_count} alumni at company`);
     }
