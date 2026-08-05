@@ -4,7 +4,7 @@ import {
   Document, Packer, Paragraph, TextRun, AlignmentType, BorderStyle, HeadingLevel, convertInchesToTwip,
 } from 'docx'
 
-export const APP_VERSION = 'v2026:08:05-15:23'
+export const APP_VERSION = 'v2026:08:06-01:51'
 const STATUSES = ['draft','submitted','responded','interview','offer','rejected','closed']
 const DEFAULT_MODEL = 'claude-sonnet-4-6'
 
@@ -594,6 +594,16 @@ function Inbox({ session, notify, onChange }) {
                 {TRIAGE_META[j.triage]?.label}
               </span>
               {j.alumni_count > 0 && <span className="muted small" style={{ whiteSpace: 'nowrap' }}>{j.alumni_count} alumni</span>}
+              {j.state !== 'promoted' && (
+                <button
+                  className="ghost"
+                  disabled={busy}
+                  style={{ padding: '3px 10px', fontSize: '.7rem', whiteSpace: 'nowrap' }}
+                  onClick={(e) => { e.stopPropagation(); setState(j, j.state === 'dismissed' ? 'new' : 'dismissed') }}
+                >
+                  {j.state === 'dismissed' ? 'Restore' : 'Dismiss'}
+                </button>
+              )}
             </div>
           </div>
           <div className="muted small" style={{ marginTop: 6 }}>

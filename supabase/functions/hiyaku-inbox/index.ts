@@ -269,9 +269,13 @@ ABSOLUTE RULES
 
 SALARY
 - salary_text: copy verbatim, including currency and any qualifier.
-- salary_basis: "platform_estimate" if the email labels it an estimate
-  (for example "Glassdoor Est."), "posted" if presented as the employer's
-  figure, "not_stated" if absent.
+- salary_basis: decide from the label the email prints, never from the numbers.
+  "Glassdoor Est." or any platform's own estimate -> "platform_estimate"
+  "Employer Est." or a range the employer supplied -> "posted"
+  no salary shown at all -> "not_stated"
+  The same label must always produce the same basis. If the label is one you
+  have not been told about, use "platform_estimate", which is the cautious
+  choice, and never present it as the employer's own figure.
 
 Return ONLY a JSON array. No prose, no markdown fences.
 Each element:
