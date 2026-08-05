@@ -31,6 +31,9 @@ var BATCH_SIZE       = 1;    // emails per POST. Was 3, which exceeded the
                              // Edge Function's 150s idle limit once links were
                              // restored and converted text grew 10x.
 var MAX_RUNTIME_MS   = 4.5 * 60 * 1000;
+var MAX_EMAILS_PER_RUN = 4;  // bodies fetched per run. Each email is one AI
+                             // call of roughly 60-90s, so more than this is
+                             // fetched and then discarded when time runs out.
 
 // --------------------------------------------------------------- properties
 
@@ -146,10 +149,14 @@ function collectMessages_(sinceMs, hardLimit) {
   var label = GmailApp.getUserLabelByName(c.label);
   if (!label) throw new Error('Gmail label not found: ' + c.label);
 
-  var collected = [];
+  // PHASE 1 - metadata only. getBody() is the expensive call: converting all
+  // 157 labelled messages consumed nearly four minutes of a 4.5 minute budget
+  // and then discarded all but one. Here we read only date and sender, which
+  // is cheap, so we can decide WHICH messages matter before paying for any.
+  var candidates = [];
   var start = 0;
-  var page = 50;
-  while (collected.length < hardLimit) {
+  var page = 100;
+  while (start < 1000) {
     var threads = label.getThreads(start, page);
     if (!threads.length) break;
     for (var t = 0; t < threads.length; t++) {
@@ -163,21 +170,31 @@ function collectMessages_(sinceMs, hardLimit) {
           Logger.log('SKIPPED unrecognised sender: ' + msg.getFrom());
           continue;
         }
-        collected.push({
-          messageId: msg.getId(),
-          subject: msg.getSubject(),
-          date: dt.toISOString(),
-          source: source,
-          text: htmlToTextWithLinks_(msg.getBody())
-        });
-        if (collected.length >= hardLimit) break;
+        candidates.push({ msg: msg, ms: dt.getTime(), source: source });
       }
-      if (collected.length >= hardLimit) break;
     }
     start += page;
   }
-  collected.sort(function (a, b) { return a.date < b.date ? -1 : 1; });
-  return collected;
+
+  // Oldest first, so a resumed run continues forward through the month.
+  candidates.sort(function (a, b) { return a.ms - b.ms; });
+  var take = candidates.slice(0, hardLimit);
+  Logger.log('Candidates after watermark: ' + candidates.length +
+             ' | fetching bodies for: ' + take.length);
+
+  // PHASE 2 - fetch and convert only the messages this run will process.
+  var out = [];
+  for (var i = 0; i < take.length; i++) {
+    var mm = take[i].msg;
+    out.push({
+      messageId: mm.getId(),
+      subject: mm.getSubject(),
+      date: new Date(take[i].ms).toISOString(),
+      source: take[i].source,
+      text: htmlToTextWithLinks_(mm.getBody())
+    });
+  }
+  return out;
 }
 
 // ----------------------------------------------------------------- sweeping
@@ -194,7 +211,7 @@ function sweep_(mode, maxJobs, dryRun) {
   var wm = props.getProperty('WATERMARK_MS');
   var sinceMs = wm ? Number(wm) : 0;
 
-  var emails = collectMessages_(sinceMs, 200);
+  var emails = collectMessages_(sinceMs, MAX_EMAILS_PER_RUN);
   Logger.log('Messages collected: ' + emails.length +
              (sinceMs ? ' (resuming after ' + new Date(sinceMs).toISOString() + ')'
                       : ' (from the beginning)'));
