@@ -4,7 +4,7 @@ import {
   Document, Packer, Paragraph, TextRun, AlignmentType, BorderStyle, HeadingLevel, convertInchesToTwip,
 } from 'docx'
 
-export const APP_VERSION = 'v2026:08:06-01:51'
+export const APP_VERSION = 'v2026:08:20-00:07'
 const STATUSES = ['draft','submitted','responded','interview','offer','rejected','closed']
 const DEFAULT_MODEL = 'claude-sonnet-4-6'
 
@@ -406,6 +406,8 @@ function Login({ notify, toast }) {
 // Read-only review surface over hiyaku_inbox_jobs. Nothing here produces a
 // suitability score: rows arrive with a rule-based triage bucket only. A real
 // assessment happens after promotion, in the New Application flow.
+const PAGE = 300
+
 const TRIAGE_META = {
   look:  { label: 'Look',  color: 'var(--teal)' },
   maybe: { label: 'Maybe', color: 'var(--muted)' },
@@ -430,31 +432,38 @@ function Inbox({ session, notify, onChange }) {
   const [openId, setOpenId] = useState(null)
   const [busy, setBusy] = useState(false)
 
+  const [counts, setCounts] = useState({ all: 0, look: 0, maybe: 0, skip: 0, dismissed: 0, promoted: 0 })
+
+  // Rows are fetched for the SELECTED bucket only. Previously one unfiltered
+  // page of PAGE rows was fetched and filtered in the browser, so once the
+  // table grew past PAGE the buckets silently hid rows that were never loaded.
   const load = async () => {
     setLoading(true)
-    const { data, error } = await supabase.from('hiyaku_inbox_jobs')
-      .select('*').order('created_at', { ascending: false }).limit(300)
+    let q = supabase.from('hiyaku_inbox_jobs').select('*')
+    if (filter === 'dismissed') q = q.eq('state', 'dismissed')
+    else if (filter === 'promoted') q = q.eq('state', 'promoted')
+    else if (filter !== 'all') q = q.eq('state', 'new').eq('triage', filter)
+    const { data, error } = await q.order('created_at', { ascending: false }).limit(PAGE)
     if (error) notify(error.message); else setRows(data || [])
     setLoading(false)
   }
-  useEffect(() => { load() }, [])
 
-  const counts = useMemo(() => {
-    const c = { all: rows.length, look: 0, maybe: 0, skip: 0, dismissed: 0, promoted: 0 }
-    rows.forEach(r => {
-      if (r.state === 'dismissed') c.dismissed++
-      else if (r.state === 'promoted') c.promoted++
-      else c[r.triage] = (c[r.triage] || 0) + 1
+  // Counts come from the server, never from the loaded page, so a chip can
+  // never disagree with the tab badge (which counts the same way).
+  const loadCounts = async () => {
+    const base = () => supabase.from('hiyaku_inbox_jobs').select('id', { count: 'exact', head: true })
+    const active = (t) => base().eq('state', 'new').eq('triage', t)
+    const [all, look, maybe, skip, dismissed, promoted] = await Promise.all([
+      base(), active('look'), active('maybe'), active('skip'),
+      base().eq('state', 'dismissed'), base().eq('state', 'promoted'),
+    ])
+    setCounts({
+      all: all.count || 0, look: look.count || 0, maybe: maybe.count || 0,
+      skip: skip.count || 0, dismissed: dismissed.count || 0, promoted: promoted.count || 0,
     })
-    return c
-  }, [rows])
+  }
 
-  const shown = useMemo(() => {
-    if (filter === 'all') return rows
-    if (filter === 'dismissed') return rows.filter(r => r.state === 'dismissed')
-    if (filter === 'promoted') return rows.filter(r => r.state === 'promoted')
-    return rows.filter(r => r.triage === filter && r.state !== 'dismissed' && r.state !== 'promoted')
-  }, [rows, filter])
+  useEffect(() => { load(); loadCounts() }, [filter])
 
   const setState = async (job, state) => {
     setBusy(true)
@@ -462,7 +471,8 @@ function Inbox({ session, notify, onChange }) {
       .update({ state }).eq('id', job.id)
     setBusy(false)
     if (error) { notify(error.message); return }
-    await load(); if (onChange) onChange()
+    if (openId) setOpenId(null)
+    await load(); await loadCounts(); if (onChange) onChange()
   }
 
   // Promote copies only fields that actually exist on the staged row. Nothing
@@ -489,7 +499,7 @@ function Inbox({ session, notify, onChange }) {
     notify(job.full_text
       ? 'Promoted with the full posting. Run the assessment in Applications.'
       : 'Promoted. No full posting was available — paste it in before generating.')
-    setOpenId(null); await load(); if (onChange) onChange()
+    setOpenId(null); await load(); await loadCounts(); if (onChange) onChange()
   }
 
   const open = rows.find(r => r.id === openId)
@@ -578,11 +588,14 @@ function Inbox({ session, notify, onChange }) {
       </div>
 
       {loading && <p className="muted">Loading…</p>}
-      {!loading && shown.length === 0 && (
+      {!loading && rows.length === PAGE && (
+        <p className="muted small">Showing the {PAGE} most recent in this bucket.</p>
+      )}
+      {!loading && rows.length === 0 && (
         <p className="muted">Nothing here. Staged roles arrive from the Gmail sweep; if you have not run it yet, this stays empty.</p>
       )}
 
-      {shown.map(j => (
+      {rows.map(j => (
         <div key={j.id} className="list-item" onClick={() => setOpenId(j.id)} style={{ cursor: 'pointer' }}>
           <div className="hstack">
             <div>
