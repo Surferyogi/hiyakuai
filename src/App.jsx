@@ -4,7 +4,7 @@ import {
   Document, Packer, Paragraph, TextRun, AlignmentType, BorderStyle, HeadingLevel, convertInchesToTwip,
 } from 'docx'
 
-export const APP_VERSION = 'v2026:08:20-00:21'
+export const APP_VERSION = 'v2026:10:14-01:41'
 const STATUSES = ['draft','submitted','responded','interview','offer','rejected','closed']
 const DEFAULT_MODEL = 'claude-sonnet-4-6'
 
@@ -512,8 +512,8 @@ function Inbox({ session, notify, onChange }) {
     setBusy(false)
     if (e2) { notify(e2.message); return }
     notify(job.full_text
-      ? 'Promoted with the full posting. Run the assessment in Applications.'
-      : 'Promoted. No full posting was available — paste it in before generating.')
+      ? 'Promoted with the full posting. Open it in Applications and run the suitability check.'
+      : 'Promoted. No full posting was available — open it in Applications, paste the posting into the Job description tab, then extract and generate.')
     setOpenId(null); await load(); await loadCounts(); if (onChange) onChange()
   }
 
@@ -713,16 +713,93 @@ function Applications({ session, notify }) {
 function ApplicationDetail({ app, notify, back }) {
   const [a, setA] = useState(app)
   const [busy, setBusy] = useState(false)
-  const [view, setView] = useState('cv')  // cv | letter | jd | notes
+  const [view, setView] = useState('cv')  // cv | letter | suit | fit | jobinfo | jd | notes
+  const [busyAi, setBusyAi] = useState(null)  // null | 'extract' | 'assess' | 'generate'
 
-  const save = async (patch) => {
+  const save = async (patch, msg = 'Saved.') => {
     setBusy(true)
     const { data, error } = await supabase.from('hiyaku_applications')
       .update(patch).eq('id', a.id).select().single()
     setBusy(false)
-    if (error) notify(error.message)
-    else { setA(data); notify('Saved.') }
+    if (error) { notify(error.message); return false }
+    setA(data); notify(msg); return true
   }
+
+  // ---- Complete a draft in place (needed for Inbox promotions, which arrive
+  // with no posting text and nothing generated). Each action persists the
+  // pasted job description FIRST so a failed AI call never loses the paste.
+  const jdText = () => (a.job_description || '').trim()
+  const currentModel = () => localStorage.getItem('hiyaku_model') || DEFAULT_MODEL
+  const aiLocked = busy || !!busyAi
+
+  const loadLibrary = async () => {
+    const lib = await fetchLibrary()
+    if (!lib.hasContent) { notify('Library is empty — fill your Library first (Library tab).'); return null }
+    return lib
+  }
+
+  const assess = async () => {
+    const jd = jdText()
+    if (!jd) { notify('Paste the job description first (Job description tab).'); return }
+    setBusyAi('assess')
+    try {
+      if (!(await save({ job_description: a.job_description }))) return
+      const lib = await loadLibrary(); if (!lib) return
+      const model = currentModel()
+      const data = await callAi({ mode: 'assess', jobDescription: jd, ...libraryPayload(lib, model) }, 'suitability check', notify)
+      if (!data) return
+      await save({ suitability: { ...data, assessed_at: new Date().toISOString(), model } }, 'Suitability check saved.')
+      setView('suit')
+    } finally { setBusyAi(null) }
+  }
+
+  // Mirrors the New tab: extract the structured job fields from the pasted
+  // posting, then auto-run the suitability check on the same text.
+  const extract = async () => {
+    const jd = jdText()
+    if (!jd) { notify('Paste the job description first (Job description tab).'); return }
+    setBusyAi('extract')
+    try {
+      if (!(await save({ job_description: a.job_description }))) return
+      const data = await callAi({ mode: 'extract', rawPosting: jd, model: currentModel() }, 'extraction', notify)
+      if (!data) return
+      const ns = (v) => (v && v !== 'Not stated' ? v : '')
+      const patch = {
+        location: data.location || 'Not stated',
+        qualifications: data.qualifications || 'Not stated',
+        expectations: data.expectations || 'Not stated',
+        how_to_apply: data.howToApply || 'Not stated',
+        salary_range: data.salaryRange || 'Not stated',
+      }
+      // Company and role are this application's identity: fill only when missing.
+      if ((!a.company || a.company === 'Not stated') && ns(data.company)) patch.company = data.company
+      if ((!a.role_title || a.role_title === 'Not stated') && ns(data.roleTitle)) patch.role_title = data.roleTitle
+      if (!(await save(patch, 'Details extracted — verify them in the Job info tab.'))) return
+    } finally { setBusyAi(null) }
+    await assess()
+  }
+
+  const generate = async () => {
+    const jd = jdText()
+    if (!jd) { notify('Paste the job description first (Job description tab).'); return }
+    if ((a.cv_generated || a.cover_letter_generated)
+      && !confirm('Replace the existing tailored CV and cover letter with a fresh generation?')) return
+    setBusyAi('generate')
+    try {
+      if (!(await save({ job_description: a.job_description }))) return
+      const lib = await loadLibrary(); if (!lib) return
+      const data = await callAi({ jobDescription: jd, ...libraryPayload(lib, currentModel()), network: [] }, 'generation', notify)
+      if (!data) return
+      await save({
+        cv_generated: data.cv || '', cover_letter_generated: data.coverLetter || '', fit_notes: data.fitNotes || '',
+      }, 'Tailored CV and cover letter generated — review them in their tabs.')
+      setView('cv')
+    } finally { setBusyAi(null) }
+  }
+
+  const noDocsHint = (
+    <p className="muted small">Nothing generated yet. Paste the posting in the Job description tab, then press "Generate CV + cover letter".</p>
+  )
 
   const copy = (text, label) => copyMd(text, label, notify)
   const copyRaw = (text, label) => copyPlain(text, label, notify)
@@ -764,6 +841,7 @@ function ApplicationDetail({ app, notify, back }) {
           ))}
         </div>
         {view === 'cv' && <>
+          {!a.cv_generated && noDocsHint}
           <textarea rows={18} value={a.cv_generated || ''} onChange={e => setA({ ...a, cv_generated: e.target.value })} />
           <div className="row no-print" style={{ marginTop: 8 }}>
             <button onClick={() => save({ cv_generated: a.cv_generated })} disabled={busy}>Save CV</button>
@@ -777,6 +855,7 @@ function ApplicationDetail({ app, notify, back }) {
           </div>
         </>}
         {view === 'letter' && <>
+          {!a.cover_letter_generated && noDocsHint}
           <textarea rows={14} value={a.cover_letter_generated || ''} onChange={e => setA({ ...a, cover_letter_generated: e.target.value })} />
           <div className="row no-print" style={{ marginTop: 8 }}>
             <button onClick={() => save({ cover_letter_generated: a.cover_letter_generated })} disabled={busy}>Save letter</button>
@@ -787,7 +866,17 @@ function ApplicationDetail({ app, notify, back }) {
             <button className="ghost" onClick={() => exportDocx('Cover letter', a.cover_letter_generated)}>Export DOCX</button>
           </div>
         </>}
-        {view === 'suit' && <AssessmentView data={a.suitability} />}
+        {view === 'suit' && <>
+          {busyAi === 'assess'
+            ? <p className="muted"><span className="spin" /> Assessing your Library against the posting's stated requirements…</p>
+            : <AssessmentView data={a.suitability} />}
+          <div className="row no-print" style={{ marginTop: 8 }}>
+            <button className="ghost" onClick={assess} disabled={aiLocked || !jdText()}>
+              {busyAi === 'assess' && <span className="spin" />}{a.suitability ? 'Re-run suitability check' : 'Run suitability check'}
+            </button>
+          </div>
+          {!jdText() && <p className="muted small">Needs the job description — paste it in the Job description tab first.</p>}
+        </>}
         {view === 'fit' && <div className="md">{a.fit_notes || 'No fit notes.'}</div>}
         {view === 'jobinfo' && <>
           {[['location', 'Location'], ['qualifications', 'Qualifications'], ['expectations', 'Expectations / responsibilities'], ['how_to_apply', 'How to apply'], ['salary_range', 'Salary range']].map(([k, lbl]) => (
@@ -802,7 +891,26 @@ function ApplicationDetail({ app, notify, back }) {
             how_to_apply: a.how_to_apply, salary_range: a.salary_range,
           })}>Save job info</button>
         </>}
-        {view === 'jd' && <div className="md">{a.job_description || 'No job description stored.'}</div>}
+        {view === 'jd' && <>
+          <textarea rows={14} value={a.job_description || ''} onChange={e => setA({ ...a, job_description: e.target.value })}
+            placeholder="No job description stored. Paste the entire posting here - company blurb, role, requirements, salary, application instructions." />
+          <div className="row no-print" style={{ marginTop: 8 }}>
+            <button onClick={() => save({ job_description: a.job_description })} disabled={aiLocked}>Save job description</button>
+            <button className="ghost" onClick={extract} disabled={aiLocked || !jdText()}>
+              {busyAi === 'extract' && <span className="spin" />}Extract details + assess
+            </button>
+            <button className="ghost" onClick={assess} disabled={aiLocked || !jdText()}>
+              {busyAi === 'assess' && <span className="spin" />}Run suitability check
+            </button>
+            <button className="ghost" onClick={generate} disabled={aiLocked || !jdText()}>
+              {busyAi === 'generate' && <span className="spin" />}Generate CV + cover letter
+            </button>
+          </div>
+          <p className="muted small">
+            The AI reads only the text above and your Library. Anything the posting doesn't state is marked "Not stated", never guessed.
+            Extraction fills the Job info tab and then runs the suitability check; generation uses Library facts only, with no Connex contacts from this screen.
+          </p>
+        </>}
         {view === 'notes' && <>
           <textarea rows={8} value={a.notes || ''} onChange={e => setA({ ...a, notes: e.target.value })} />
           <button style={{ marginTop: 8 }} onClick={() => save({ notes: a.notes })} disabled={busy}>Save notes</button>
@@ -1031,6 +1139,57 @@ function ConnexSettings({ notify }) {
   )
 }
 
+// ---------- Shared AI plumbing (New tab + Application detail) ---------------
+// Fetch the whole Library once, in the same shape both generate and assess need.
+async function fetchLibrary() {
+  const [{ data: prof }, { data: links }, { data: certs }, { data: secs }] = await Promise.all([
+    supabase.from('hiyaku_profile').select('*').maybeSingle(),
+    supabase.from('hiyaku_links').select('*').eq('include_in_prompt', true),
+    supabase.from('hiyaku_certificates').select('name,note,parsed_text'),
+    supabase.from('hiyaku_sections').select('section_key,content'),
+  ])
+  const hasContent = !!(prof?.cv_markdown || prof?.linkedin_headline || prof?.linkedin_about || prof?.extra_notes
+    || (secs || []).some(s => s.content && s.content.trim())
+    || (certs || []).length || (links || []).length)
+  return { prof, links: links || [], certs: certs || [], secs: secs || [], hasContent }
+}
+
+// The Library portion of a generate / assess request body. Identical to what
+// the New tab sends, so both entry points feed the AI the same evidence.
+const libraryPayload = (lib, model) => ({
+  referenceCv: lib.prof?.cv_markdown, headline: lib.prof?.linkedin_headline,
+  about: lib.prof?.linkedin_about, extraNotes: lib.prof?.extra_notes,
+  links: lib.links, certificates: lib.certs, model,
+  sections: lib.secs.map(s => ({ title: sectionTitle(s.section_key), content: s.content })),
+})
+
+// One call to hiyaku-generate under a screen wake lock, retried once if the
+// screen locked mid-flight (same discipline as the New tab's loops). Returns the
+// response data, or null after notifying the user of the failure.
+async function callAi(body, label, notify) {
+  await acquireWake()
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      beginRun()
+      try {
+        const { data, error } = await supabase.functions.invoke('hiyaku-generate', { body })
+        if (error) throw new Error(error.message)
+        if (data.error) throw new Error(data.error)
+        return data
+      } catch (e) {
+        const suspended = wasHidden()
+        if (suspended && attempt === 0) { notify(`Screen locked during ${label} - resuming automatically.`); continue }
+        notify(`${label.charAt(0).toUpperCase() + label.slice(1)} failed: ` + e.message
+          + (suspended ? ' (the screen locked while processing - keep the screen on and retry)' : ''))
+        return null
+      }
+    }
+  } finally {
+    await releaseWake()
+  }
+  return null
+}
+
 function NewApplication({ session, notify, done }) {
   const [rawPosting, setRawPosting] = useState('')
   const [files, setFiles] = useState([])
@@ -1049,20 +1208,6 @@ function NewApplication({ session, notify, done }) {
   const [contacts, setContacts] = useState([])
   const [contactsLoaded, setContactsLoaded] = useState(false)
   const [selectedIds, setSelectedIds] = useState(() => new Set())
-
-  // Fetch the whole Library once, in the same shape both generate and assess need.
-  const fetchLibrary = async () => {
-    const [{ data: prof }, { data: links }, { data: certs }, { data: secs }] = await Promise.all([
-      supabase.from('hiyaku_profile').select('*').maybeSingle(),
-      supabase.from('hiyaku_links').select('*').eq('include_in_prompt', true),
-      supabase.from('hiyaku_certificates').select('name,note,parsed_text'),
-      supabase.from('hiyaku_sections').select('section_key,content'),
-    ])
-    const hasContent = !!(prof?.cv_markdown || prof?.linkedin_headline || prof?.linkedin_about || prof?.extra_notes
-      || (secs || []).some(s => s.content && s.content.trim())
-      || (certs || []).length || (links || []).length)
-    return { prof, links: links || [], certs: certs || [], secs: secs || [], hasContent }
-  }
 
   // Load Connex contacts once when connected; recompute matches as company changes.
   useEffect(() => {
